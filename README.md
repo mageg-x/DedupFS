@@ -282,7 +282,7 @@ Unlike traditional fixed-size chunking deduplication, DedupFS employs content-de
 |---------|---------|-------------------|-------------------------|
 | Deduplication Granularity | Variable Block | Fixed Block | File Level |
 | Memory Overhead | Medium | High | Low |
-| Transparent Usage | ✅ | ✅ | ✅ |
+| Transparent Usage | ✅ | ✅ | ❌ |
 | Cross-File Deduplication | ✅ | ✅ | ❌ |
 | Similarity Compression | ✅ | ❌ | ❌ |
 
