@@ -14,6 +14,7 @@ DedupFS is an innovative deduplication and compression file system that transpar
 
 ## Core Values
 
+- **Dual-Layer Deduplication Strategy**: Unique combination of intra-file chunk deduplication and global cross-file deduplication to comprehensively eliminate redundant data
 - **Storage Efficiency Revolution**: Achieve 3-5x storage space savings through advanced content chunking and similarity aggregation technologies
 - **Performance and Efficiency Balance**: Minimize I/O performance impact while ensuring deduplication effectiveness
 - **Completely Transparent Usage**: Provides standard POSIX file system interface, no modifications required for existing applications
@@ -37,39 +38,45 @@ pub struct FastCDCChunker {
 - **Variable Chunk Sizes**: Adaptively adjust chunk sizes to optimize deduplication effectiveness
 - **High Throughput Processing**: Single-threaded processing speed up to 2GB/s
 
-### 🔍 Global Duplicate Data Elimination
+### 🔍 Double-Layer Deduplication Technology
 
 ```rust
 // SHA-256 based global deduplication
 impl DedupEngine {
     pub fn find_duplicates(&self, chunks: &[Chunk]) -> Vec<ChunkRef> {
+        // Intra-file duplicate chunk detection
         // Global hash index lookup
         // Cross-file, cross-directory duplicate data identification
     }
 }
 ```
 
-**Deduplication Features**:
-- **Global Deduplication Scope**: Duplicate data detection across all files
+**Double-Layer Deduplication Advantages**:
+- **Intra-File Deduplication**: Identify and eliminate duplicate data blocks within a single file
+- **Inter-File Deduplication**: Global duplicate data detection across all files and directories
 - **Cryptographic Hash**: SHA-256 ensures data uniqueness with extremely low collision probability
 - **Real-time Deduplication**: Instant detection and elimination of duplicate data during writing
+- **Intelligent Merging**: Only one copy of identical data blocks is retained at the storage layer, maximizing space savings
 
-### 🗜️ Intelligent Compression Strategy
+### 🗜️ Dual-Layer Compression Technology
 
 ```rust
 // Similar block aggregation compression
 impl CompressionEngine {
     pub fn compress_blocks(&self, similar_chunks: Vec<Chunk>) -> CompressedBlock {
+        // Single chunk compression processing
         // Similar content aggregation followed by unified compression
         // Utilize data locality to improve compression ratio
     }
 }
 ```
 
-**Compression Innovations**:
-- **Similarity Aggregation**: Aggregate similar data blocks into larger blocks before compression
+**Dual-Layer Compression Advantages**:
+- **Chunk-Level Compression**: Basic compression for individual data blocks
+- **Similarity Aggregation Compression**: Reorganize similar chunks into blocks for secondary compression
 - **Zstandard Algorithm**: Perfect balance of high compression ratio and fast decompression
 - **Adaptive Compression Levels**: Intelligently select compression strategies based on data type
+- **Multi-Level Compression**: Dual compression strategy achieves higher compression ratios than single compression methods
 
 ### ⚡ High-Performance Architecture
 
