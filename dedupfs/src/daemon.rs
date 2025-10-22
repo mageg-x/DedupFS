@@ -146,7 +146,7 @@ impl Client {
     }
 
     pub fn send_command(&self, command: Command) -> Result<Response> {
-        tracing::debug!("sending command (sync): {:?}", command);
+        tracing::debug!("sending command sync: {:?}", command);
         let mut stream = std::os::unix::net::UnixStream::connect(&self.socket_path).map_err(|e|
             crate::errors::new(crate::errors::SocketConnectError {
                 path: self.socket_path.clone(),
