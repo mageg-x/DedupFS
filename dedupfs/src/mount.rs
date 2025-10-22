@@ -64,9 +64,9 @@ pub fn watch_filesystem() {
 
         if result.is_err() {
             ::tracing::error!(
-                "{}",
-                crate::errors::new(crate::errors::WatcherThreadPanic).to_string()
-            );
+                 "{}",
+                 crate::errors::new(crate::errors::WatcherThreadPanic).to_string()
+             );
         }
     });
 }
