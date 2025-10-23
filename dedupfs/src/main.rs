@@ -62,10 +62,10 @@ fn main() -> Result<()> {
 
     // 运行daemon
     if !daemon::is_daemon_running(socket_path) {
-        tracing::info!("background service not running, starting as daemon...")
+        tracing::info!("background service not running, starting as daemon...");
         // 使用ensure_daemon_running函数启动守护进程（这将创建独立的后台进程）
         if let Err(e) = daemon::ensure_daemon_running(socket_path) {
-            tracing::error!("failed to start daemon: {}", e)
+            tracing::error!("failed to start daemon: {}", e);
             return Err(e);
         }
     } else {

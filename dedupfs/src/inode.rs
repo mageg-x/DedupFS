@@ -824,3 +824,21 @@ pub fn remove_inode(ino: u64, fs: &DedupFS) -> Result<()> {
 
     Ok(())
 }
+
+pub fn cache_inode(inode: &INode, fs: &DedupFS) -> Result<()> { 
+    info!("caching inode {} for filesystem {}", inode.ino, fs.id);
+
+    // 计算 inode.chunks 的 的数据大小
+    let inode_size = inode.chunks.iter().map(|c| c.data.len()).sum::<usize>();
+    
+    // 如果 inode_size 大于 fs.chunk_conf.max_size, 就些保存
+    if inode_size > fs.chunk_conf.max_size {
+        info!("inode {} size {} exceeds max_size {}, saving to kv_store", inode.ino, inode_size, fs.chunk_conf.max_size);
+        save_inode(inode, fs)?;
+        return Ok(());
+    } 
+
+    let cache_key = format!("{}:{}", fs.id, inode.ino);
+    G_INODE_CACHE.insert(cache_key, Arc::new(inode.clone()));
+    Ok(())
+}

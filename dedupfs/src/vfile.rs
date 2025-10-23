@@ -632,7 +632,7 @@ impl Filesystem for DedupFS {
             inode.write(offset as u64, data, self);
             
             // 保存更新后的元数据
-            if crate::inode::save_inode(&inode, self).is_err() {
+            if crate::inode::cache_inode(&inode, self).is_err() {
                 error!("filesystem::write - error saving metadata for inode {}", ino);
                 reply.error(libc::EIO);
                 return;
@@ -710,7 +710,7 @@ impl Filesystem for DedupFS {
                     return;
                 }
                 // 保存更新后的inode
-                if let Err(e) = crate::inode::save_inode(&inode, self) {
+                if let Err(e) = crate::inode::cache_inode(&inode, self) {
                     error!("filesystem::setattr - failed to save inode {} after truncate: {:?}", ino, e);
                     reply.error(libc::EIO);
                     return;
