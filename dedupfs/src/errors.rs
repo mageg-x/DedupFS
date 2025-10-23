@@ -46,6 +46,7 @@ define_error!(pub BlockSaveFailed, "failed to save block: {error}", error);
 define_error!(pub BlockNotFound, "block not found: {block_id}", block_id);
 define_error!(pub BlockReadFailed, "failed to read block {block_id}: {error}", block_id, error);
 define_error!(pub BlockDeleteFailed, "failed to delete block: {error}", error);
+define_error!(pub BlockSizeMismatch, "block size mismatch: {block_id}, expected: {expected_size}, actual: {actual_size}", block_id, expected_size, actual_size);
 
 // 分块相关错误
 define_error!(pub ChunkSizeConversionError, "failed to convert chunk size {size}: {error}", size, error);

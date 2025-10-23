@@ -73,6 +73,9 @@ pub fn calc_hash( data: &[u8]) -> String {
 pub fn do_chunking(data: &[u8], fs: &DedupFS) -> Result<Vec<Chunk>> {
     info!("starting chunking process for data of size {} bytes", data.len());
     let config = &fs.chunk_conf;
+    // 把 config 内容 打印到控制台
+    info!("chunking configuration: {:?}", config);
+
     let mut chunks = Vec::new();
     
     if config.fixed_size {
@@ -207,7 +210,7 @@ pub fn get_chunk_data(hash: &str, fs: &DedupFS) -> Result<Chunk> {
             if offset + chunk_size <= block.data.len() {
                 target_chunk_data = Some(block.data[offset..offset + chunk_size].to_vec());
             } else {
-                error!("chunk size {} exceeds available block data at offset {}", chunk_size, offset);
+                error!("chunk size {} exceeds available block data len {} at offset {}", chunk_size, block.data.len(), offset);
             }
             break;
         }

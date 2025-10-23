@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crate::errors::{BlockNotFound, BlockReadFailed, BlockDeleteFailed, CompressionFailed, BlockDeserializationFailed, BlockCreationFailed, DecryptionFailed, KeyGenerationFailed, DecompressionFailed, ChunkRefCountUpdateFailed, ChunkMetadataSaveFailed, ChunkExistenceCheckFailed, BlockSaveFailed, ChunkDataNotFound};
+use crate::errors::{BlockNotFound, BlockReadFailed, BlockDeleteFailed, BlockSizeMismatch, CompressionFailed, BlockDeserializationFailed, BlockCreationFailed, DecryptionFailed, KeyGenerationFailed, DecompressionFailed, ChunkRefCountUpdateFailed, ChunkMetadataSaveFailed, ChunkExistenceCheckFailed, BlockSaveFailed, ChunkDataNotFound};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -50,17 +50,16 @@ pub struct BlockHeader {
     pub encrypted: bool,
     /// 切片列表
     pub chunk_list: Vec<BlockChunk>,
-    /// 创建时间
-    pub created_at: SystemTime,
-    /// 更新时间
-    pub updated_at: SystemTime,
+    /// 创建时间（Unix时间戳，纳秒）
+    pub created_at: u128,
+    /// 更新时间（Unix时间戳，纳秒）
+    pub updated_at: u128,
 }
 
 /// BlockData: 完整结构（包含 Data）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     /// 块头信息
-    #[serde(flatten)]
     pub header: BlockHeader,
     /// 块数据
     pub data: Vec<u8>,
@@ -69,7 +68,10 @@ pub struct Block {
 impl Block {
     /// 创建新的块
     pub fn new() -> Result<Self> {
-        let now = SystemTime::now();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         let block_id = generate_block_id();
         Ok(Block {
             header: BlockHeader {
@@ -142,8 +144,8 @@ pub fn get_block_path(block_id: &str) -> PathBuf {
 
 pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
     // 构建block文件路径
-    let block_path = fs.data_path.join("blocks").join(block_id);
-    
+    let block_path = fs.data_path.join(get_block_path(block_id));
+
     // 检查block文件是否存在
     if !block_path.exists() {
         error!("read_block - block not found: {}, path: {:?}", block_id, block_path);
@@ -166,6 +168,16 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
             return Err(BlockDeserializationFailed { block_id: block_id.to_string(), error: e.to_string() }.into());
         }
     };
+
+    // 校验 block.real_size 和 block.data 长度是否一致
+    if block.header.real_size != block.data.len() as i64 {
+        error!("read_block - block size mismatch: {}, expected: {}, actual: {}", block_id, block.header.real_size, block.data.len());
+        return Err(BlockSizeMismatch { 
+            block_id: block_id.to_string(), 
+            expected_size: block.header.real_size.to_string(), 
+            actual_size: (block.data.len() as i64).to_string() 
+        }.into());
+    }
     
     // 解密数据（如果需要）
     if block.header.encrypted {
@@ -196,7 +208,7 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
         match decompress_data(&block.data) {
             Ok(decompressed) => {
                 block.data = decompressed;
-                info!("read_block - block {} decompression successful", block.header.id);
+                info!("read_block - block {} decompression len {} successful", block.header.id, block.data.len());
             },
             Err(e) => {
                 error!("read_block - failed to decompress block: {}, error: {:?}", block_id, e);
@@ -204,65 +216,99 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
             }
         }
     }
+
+    // 打印 block header
+    info!("read_block - block header: {:?}, data len {}", block.header, block.data.len());
+    // 校验 block.header.total_size 和 block.data.len() 一致性
+    if block.header.total_size != block.data.len() as i64 {
+        error!("read_block - block total size mismatch: {}, expected {}, actual {}", block.header.id, block.header.total_size, block.data.len());
+        return Err(BlockSizeMismatch { 
+            block_id: block.header.id.to_string(), 
+            expected_size: block.header.total_size.to_string(), 
+            actual_size: (block.data.len() as i64).to_string() 
+        }.into());
+    }
+    
+    // 校验 chunk_list 中所有 chunk 的大小总和
+    let chunk_size_sum: i64 = block.header.chunk_list.iter().map(|chunk| chunk.size as i64).sum();
+    if block.header.total_size != chunk_size_sum {
+        error!("read_block - block chunk list size mismatch: {}, expected {}, actual chunk sum {}", block.header.id, block.header.total_size, chunk_size_sum);
+        return Err(BlockSizeMismatch {
+            block_id: block.header.id.to_string(),
+            expected_size: block.header.total_size.to_string(),
+            actual_size: chunk_size_sum.to_string()
+        }.into());
+    }
     
     Ok(block)
 }
 
 /// 对block数据进行压缩、加密处理并保存到磁盘
-pub fn save_block(mut block: Block, data_path: &Path, compress: bool, encrypt: bool) -> Result<Block> {
+pub fn save_block(block: &Block, data_path: &Path, compress: bool, encrypt: bool) -> Result<Block> {
+    // 创建block的副本，避免修改原始数据
+    let mut saved_block = block.clone();
+
+    // 打印 block header
+    info!("save_block - block header: {:?}, data len {}", saved_block.header, saved_block.data.len());
     // 先更新etag
-    let etag = blake3::hash(&block.data);
+    let etag = blake3::hash(&saved_block.data);
     etag.as_bytes().iter().take(16).enumerate().for_each(|(i, &byte)| {
-        block.header.etag[i] = byte;
+        saved_block.header.etag[i] = byte;
     });
 
     // 再统一更新一下total_size
-    block.header.total_size = 0;
-    for chunk in &block.header.chunk_list {
-        block.header.total_size += chunk.size as i64;
+    saved_block.header.total_size = 0;
+    for chunk in &saved_block.header.chunk_list {
+        saved_block.header.total_size += chunk.size as i64;
     }
+    
+    // 更新时间戳
+    saved_block.header.updated_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     
     // 先压缩
     if compress {
-        info!("save_block - compressing block {} with zstd", block.header.id);
+        info!("save_block - compressing block {} with zstd", saved_block.header.id);
         
         // 使用utils中的压缩函数，压缩级别设置为3
-        match compress_data(&block.data, 3) {
+        match compress_data(&saved_block.data, 3) {
             Ok(compressed_result) => match compressed_result {
                 Some(compressed_data) => {
-                    block.data = compressed_data;
-                    block.header.compressed = true;
-                    block.header.real_size = block.data.len() as i64;
+                    saved_block.data = compressed_data;
+                    saved_block.header.compressed = true;
+                    saved_block.header.real_size = saved_block.data.len() as i64;
                     info!("save_block - block {} compression successful, original size: {} bytes, compressed: {} bytes", 
-                          block.header.id, block.header.total_size, block.data.len());
+                          saved_block.header.id, saved_block.header.total_size, saved_block.data.len());
                 },
                 None => {
                     // 如果压缩失败，保持原始数据不变
-                    block.header.compressed = false;
-                    info!("save_block - compression didn't reduce size for block {}, keeping original", block.header.id);
+                    saved_block.header.compressed = false;
+                    info!("save_block - compression didn't reduce size for block {}, keeping original", saved_block.header.id);
                 }
             },
             Err(e) => {
-                error!("save_block - failed to compress block {}: {:?}", block.header.id, e);
-                return Err(CompressionFailed { block_id: block.header.id.clone(), error: e.to_string() }.into());
+                error!("save_block - failed to compress block {}: {:?}", saved_block.header.id, e);
+                return Err(CompressionFailed { block_id: saved_block.header.id.clone(), error: e.to_string() }.into());
             }
         }
     }
     
     // 后加密
     if encrypt {
-        info!("save_block - encrypting block {} with aes-gcm", block.header.id);
+        info!("save_block - encrypting block {} with aes-gcm", saved_block.header.id);
         
-        // 使用gen_key函数生成密钥，参数为block.header.id和16字节长度
-        let key_vec = crate::utils::gen_key(&block.header.id, 16)?;
+        // 使用gen_key函数生成密钥，参数为saved_block.header.id和16字节长度
+        let key_vec = crate::utils::gen_key(&saved_block.header.id, 16)?;
         
         // 使用utils中的加密函数
-        let encrypted_data = encrypt_data(&block.data, &key_vec)?;
+        let encrypted_data = encrypt_data(&saved_block.data, &key_vec)?;
         
-        block.data = encrypted_data;
-        block.header.encrypted = true;
-        block.header.real_size = block.data.len() as i64;
-        info!("save_block - block {} encryption successful", block.header.id);
+        saved_block.data = encrypted_data;
+        saved_block.header.encrypted = true;
+        saved_block.header.real_size = saved_block.data.len() as i64;
+        info!("save_block - block {} encryption successful", saved_block.header.id);
     }
     
     // 保存block到磁盘
@@ -282,13 +328,33 @@ pub fn save_block(mut block: Block, data_path: &Path, compress: bool, encrypt: b
         };
     }
     
+    // 校验block数据 saved_block.total_size 和 saved_block.chunk_list chunk size总和 是否一致
+    let chunk_size_sum: i64 = saved_block.header.chunk_list.iter().map(|chunk| chunk.size as i64).sum();
+    if saved_block.header.total_size != chunk_size_sum {
+        error!("save_block - block total size mismatch: {}, expected {}, actual {}", saved_block.header.id, saved_block.header.total_size, chunk_size_sum);
+        return Err(crate::errors::new(crate::errors::BlockSizeMismatch {
+            block_id: saved_block.header.id.clone(),
+            expected_size: saved_block.header.total_size.to_string(),
+            actual_size: chunk_size_sum.to_string()
+        }));
+    }
+    // 校验block数据 saved_block.real_size 和 saved_block.data.len   是否一致
+    if saved_block.header.real_size != saved_block.data.len() as i64 {
+        error!("save_block - block real size mismatch: {}, expected {}, actual {}", saved_block.header.id, saved_block.header.real_size, saved_block.data.len() as i64);
+        return Err(crate::errors::new(crate::errors::BlockSizeMismatch {
+            block_id: saved_block.header.id.clone(),
+            expected_size: saved_block.header.real_size.to_string(),
+            actual_size: (saved_block.data.len() as i64).to_string()
+        }));
+    }
+
     // 序列化并保存block
-    let block_data = match bincode::serialize(&block) {
+    let block_data = match bincode::serialize(&saved_block) {
         Ok(data) => data,
         Err(e) => {
-            error!("save_block - failed to serialize block {}: {:?}", block.header.id, e);
+            error!("save_block - failed to serialize block {}: {:?}", saved_block.header.id, e);
             return Err(crate::errors::new(crate::errors::BlockSerializationFailed { 
-                block_id: block.header.id.clone(), 
+                block_id: saved_block.header.id.clone(), 
                 error: e.to_string() 
             }));
         }
@@ -297,16 +363,17 @@ pub fn save_block(mut block: Block, data_path: &Path, compress: bool, encrypt: b
     match std::fs::write(&block_path, block_data) {
         Ok(_) => {},
         Err(e) => {
-            error!("save_block - failed to write block {} to {:?}: {:?}", block.header.id, block_path, e);
+            error!("save_block - failed to write block {} to {:?}: {:?}", saved_block.header.id, block_path, e);
             return Err(crate::errors::new(crate::errors::BlockWriteFailed { 
                 path: block_path.display().to_string(), 
                 error: e.to_string() 
             }));
         }
     }
-    info!("block {} saved to {:?}", block.header.id, block_path);
-    
-    Ok(block)
+    info!("block {} saved to {:?}", saved_block.header.id, block_path);
+    // 打印 block header
+    info!("save_block - block header: {:?}, data len {}", saved_block.header, saved_block.data.len());
+    Ok(saved_block)
 }
 
 /// 返回成功存储的block IDs列表
@@ -377,7 +444,7 @@ pub fn put_chunks(chunks: Vec<Chunk>, fs: &DedupFS) -> Result<Set<String>> {
 
                 current_block.header.chunk_list.push(block_chunk);
                 current_block.header.total_size += chunk.size as i64;
-                current_block.header.updated_at = SystemTime::now();
+                current_block.header.updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
                 
                 // 将数据添加到block的data字段
                 current_block.data.extend_from_slice(&chunk.data);
@@ -393,7 +460,7 @@ pub fn put_chunks(chunks: Vec<Chunk>, fs: &DedupFS) -> Result<Set<String>> {
             // 检查是否需要创建新block
         if  current_block.data.len() >= fs.block_conf.size {
             // 处理当前block并保存到磁盘
-            match save_block(current_block, &fs.data_path, fs.block_conf.compress, fs.block_conf.encrypt) {
+            match save_block(&current_block, &fs.data_path, fs.block_conf.compress, fs.block_conf.encrypt) {
                 Ok(_saved_block) => {
                     // 这里我们不需要返回的block，因为后面会创建新的block
                 },
@@ -419,7 +486,7 @@ pub fn put_chunks(chunks: Vec<Chunk>, fs: &DedupFS) -> Result<Set<String>> {
 
     // 最后处理当前block
     if current_block.data.len() > 0 {
-        match save_block(current_block, &fs.data_path, fs.block_conf.compress, fs.block_conf.encrypt) {
+        match save_block(&current_block, &fs.data_path, fs.block_conf.compress, fs.block_conf.encrypt) {
             Ok(saved_block) => {
                 // 将保存后的block重新赋值给current_block
                 current_block = saved_block;
@@ -492,7 +559,7 @@ pub fn remove_chunk(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
     
     // 更新block的总大小
     block.header.total_size -= chunk.size as i64;
-    block.header.updated_at = SystemTime::now();
+    block.header.updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     
     // 检查chunk_list是否为空，如果为空则删除block文件
     if block.header.chunk_list.is_empty() {
@@ -510,7 +577,7 @@ pub fn remove_chunk(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
     } else {
         // 重新保存block
         info!("remove_chunk - saving updated block {}", chunk.block_id);
-        save_block(block, &fs.data_path, fs.block_conf.compress, fs.block_conf.encrypt)?;
+        save_block(&block, &fs.data_path, fs.block_conf.compress, fs.block_conf.encrypt)?;
     }
     
     info!("remove_chunk - successfully removed chunk {} from block {}", chunk.hash, chunk.block_id);

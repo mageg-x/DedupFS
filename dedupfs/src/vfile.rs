@@ -240,7 +240,7 @@ impl Filesystem for DedupFS {
             let ttl = Duration::from_secs(1);
             reply.entry(&ttl, &attr, 0);
         } else {
-            error!("filesystem::lookup - entry '{}' not found in parent {}", name_str, parent);
+            info!("filesystem::lookup - entry '{}' not found in parent {}", name_str, parent);
             reply.error(ENOENT);
         }
     }
@@ -488,8 +488,8 @@ impl Filesystem for DedupFS {
             // 更新元数据
             inode.name = newname_str.to_string();
             inode.parent = newparent;
-            inode.mtime = SystemTime::now();
-            inode.ctime = SystemTime::now();
+            inode.mtime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+            inode.ctime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
             
             // 更新父子关系索引
             if let Some(children) = self.relation_map.get_mut(&parent) {
@@ -726,7 +726,7 @@ impl Filesystem for DedupFS {
         
         // 获取并更新元数据
         if let Ok(Some(mut inode)) = crate::inode::get_inode(ino, self) {
-            let now = SystemTime::now();
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
             
             if let Some(mode) = mode { inode.perm = mode as u16; }
             if let Some(uid) = uid { inode.uid = uid; }
@@ -737,11 +737,17 @@ impl Filesystem for DedupFS {
             
             // 更新时间
             if let Some(atime) = atime {
-                inode.atime = match atime { TimeOrNow::Now => now, TimeOrNow::SpecificTime(time) => time, };
+                inode.atime = match atime {
+                    TimeOrNow::Now => now,
+                    TimeOrNow::SpecificTime(time) => time.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()
+                };
             }
             
             if let Some(mtime) = mtime {
-                inode.mtime = match mtime { TimeOrNow::Now => now, TimeOrNow::SpecificTime(time) => time, };
+                inode.mtime = match mtime {
+                    TimeOrNow::Now => now,
+                    TimeOrNow::SpecificTime(time) => time.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos()
+                };
             }
             
             inode.ctime = now;

@@ -1,7 +1,7 @@
 use bincode::de;
 use fuser::{FileType, FileAttr};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime};
+use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -35,10 +35,10 @@ pub struct INode {
     pub ino: u64,
     pub size: u64,
     pub blocks: u64,
-    pub atime: SystemTime,
-    pub mtime: SystemTime,
-    pub ctime: SystemTime,
-    pub crtime: SystemTime,
+    pub atime: u128, // Unix时间戳，纳秒
+    pub mtime: u128, // Unix时间戳，纳秒
+    pub ctime: u128, // Unix时间戳，纳秒
+    pub crtime: u128, // Unix时间戳，纳秒
     pub kind: FileType,
     pub perm: u16,
     pub nlink: u32,
@@ -57,7 +57,10 @@ pub struct INode {
 impl INode {
     pub fn new(ino: u64, name: &str, parent: u64, kind: FileType) -> Self {
         info!("creating new inode: ino={}, name={}, parent={}, kind={:?}", ino, name, parent, kind);
-        let now = SystemTime::now();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         Self {
             ino,
             name: name.to_string(),
@@ -87,14 +90,19 @@ impl INode {
     }
 
     pub fn to_file_attr(&self) -> FileAttr {
+        // 将u128纳秒时间戳转换回SystemTime
+        let to_system_time = |nanos: u128| {
+            UNIX_EPOCH + std::time::Duration::from_nanos(nanos as u64)
+        };
+        
         FileAttr {
             ino: self.ino,
             size: self.size,
             blocks: self.blocks,
-            atime: self.atime,
-            mtime: self.mtime,
-            ctime: self.ctime,
-            crtime: self.crtime,
+            atime: to_system_time(self.atime),
+            mtime: to_system_time(self.mtime),
+            ctime: to_system_time(self.ctime),
+            crtime: to_system_time(self.crtime),
             kind: self.kind,
             perm: self.perm,
             nlink: self.nlink,
@@ -110,12 +118,12 @@ impl INode {
         info!("updating inode {} size: {} -> {}", self.ino, self.size, new_size);
         self.size = new_size;
         self.blocks = (new_size + self.blksize as u64 - 1) / self.blksize as u64;
-        self.mtime = SystemTime::now();
-        self.ctime = SystemTime::now();
+        self.mtime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        self.ctime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     }
 
     pub fn update_times(&mut self) {
-        let now = SystemTime::now();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         self.atime = now;
         self.mtime = now;
         self.ctime = now;
@@ -575,8 +583,8 @@ impl INode {
         }
         
         // 更新修改时间
-        self.mtime = SystemTime::now();
-        self.ctime = SystemTime::now();
+        self.mtime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        self.ctime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         
         info!("write completed for inode {}, file size: {}, chunks: {}", self.ino, self.size, self.chunks.len());
         Ok(())
@@ -687,8 +695,8 @@ impl INode {
         
         // 更新文件大小和时间戳
         self.update_size(new_size);
-        self.mtime = SystemTime::now();
-        self.ctime = SystemTime::now();
+        self.mtime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        self.ctime = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         
         info!("truncate completed for inode {}, new size: {}, chunks count: {}", self.ino, self.size, self.chunks.len());
         Ok(())
