@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::chunk::Chunk;
 use crate::kvstore::{KVStore, key_prefix, make_prefixed_key};
 use std::sync::Arc;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, instrument, Level};
 use zstd::stream::copy_encode;
 use std::io::Cursor;
 use crate::utils::{encrypt_data, decrypt_data, compress_data, decompress_data};
@@ -92,6 +92,220 @@ impl Block {
             data: Vec::new(),
         })
     }
+    
+    /// 快速序列化Block结构体到Vec<u8>
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        // 精确计算总大小，避免多次 realloc
+        let id_bytes = self.header.id.as_bytes();
+        let chunk_list_size: usize = self.header.chunk_list.iter()
+            .map(|chunk| 4 + chunk.hash.as_bytes().len() + 4)
+            .sum();
+        let total_capacity = 
+            4 + id_bytes.len() +          // id (len + content)
+            4 +                           // ver
+            16 +                          // etag
+            8 +                           // total_size
+            8 +                           // real_size
+            1 +                           // compressed
+            1 +                           // encrypted
+            4 + chunk_list_size +         // chunk_list (vec len + each item)
+            16 +                          // created_at
+            16 +                          // updated_at
+            8 + self.data.len();          // data (len + content)
+
+        // 使用Vec<u8>作为缓冲区（预分配容量）
+        let mut buffer = Vec::with_capacity(total_capacity);
+        
+        // 序列化BlockHeader
+        // 1. id
+        buffer.extend_from_slice(&(self.header.id.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(self.header.id.as_bytes());
+        
+        // 2. ver
+        buffer.extend_from_slice(&self.header.ver.to_le_bytes());
+        
+        // 3. etag
+        buffer.extend_from_slice(&self.header.etag);
+        
+        // 4. total_size
+        buffer.extend_from_slice(&self.header.total_size.to_le_bytes());
+        
+        // 5. real_size
+        buffer.extend_from_slice(&self.header.real_size.to_le_bytes());
+        
+        // 6. compressed
+        buffer.push(self.header.compressed as u8);
+        
+        // 7. encrypted
+        buffer.push(self.header.encrypted as u8);
+        
+        // 8. chunk_list
+        buffer.extend_from_slice(&(self.header.chunk_list.len() as u32).to_le_bytes());
+        for chunk in &self.header.chunk_list {
+            // chunk hash
+            buffer.extend_from_slice(&(chunk.hash.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(chunk.hash.as_bytes());
+            // chunk size
+            buffer.extend_from_slice(&chunk.size.to_le_bytes());
+        }
+        
+        // 9. created_at
+        buffer.extend_from_slice(&self.header.created_at.to_le_bytes());
+        
+        // 10. updated_at
+        buffer.extend_from_slice(&self.header.updated_at.to_le_bytes());
+        
+        // 序列化data
+        buffer.extend_from_slice(&(self.data.len() as u64).to_le_bytes());
+        buffer.extend_from_slice(&self.data);
+        
+        Ok(buffer)
+    }
+    
+    /// 快速反序列化Vec<u8>到Block结构体
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        let mut position = 0;
+        
+        // 反序列化BlockHeader
+        // 1. id
+        let id_len = u32::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3]]);
+        position += 4;
+        let id = String::from_utf8(data[position..position+id_len as usize].to_vec())?;
+        position += id_len as usize;
+        
+        // 2. ver
+        let ver = i32::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3]]);
+        position += 4;
+        
+        // 3. etag
+        let mut etag = [0u8; 16];
+        etag.copy_from_slice(&data[position..position+16]);
+        position += 16;
+        
+        // 4. total_size
+        let total_size = i64::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3], 
+                                            data[position+4], data[position+5], data[position+6], data[position+7]]);
+        position += 8;
+        
+        // 5. real_size
+        let real_size = i64::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3], 
+                                           data[position+4], data[position+5], data[position+6], data[position+7]]);
+        position += 8;
+        
+        // 6. compressed
+        let compressed = data[position] != 0;
+        position += 1;
+        
+        // 7. encrypted
+        let encrypted = data[position] != 0;
+        position += 1;
+        
+        // 8. chunk_list
+        let chunk_list_len = u32::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3]]);
+        position += 4;
+        let mut chunk_list = Vec::with_capacity(chunk_list_len as usize);
+
+        for _ in 0..chunk_list_len {
+            // chunk hash
+            let hash_len = u32::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3]]);
+            position += 4;
+            let hash = String::from_utf8(data[position..position+hash_len as usize].to_vec())?;
+            position += hash_len as usize;
+            
+            // chunk size
+            let size = i32::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3]]);
+            position += 4;
+            
+            chunk_list.push(BlockChunk {
+                hash,
+                size
+            });
+        }
+        
+        // 9. created_at
+        let created_at = u128::from_le_bytes([
+            data[position], data[position+1], data[position+2], data[position+3],
+            data[position+4], data[position+5], data[position+6], data[position+7],
+            data[position+8], data[position+9], data[position+10], data[position+11],
+            data[position+12], data[position+13], data[position+14], data[position+15]
+        ]);
+        position += 16;
+        
+        // 10. updated_at
+        let updated_at = u128::from_le_bytes([
+            data[position], data[position+1], data[position+2], data[position+3],
+            data[position+4], data[position+5], data[position+6], data[position+7],
+            data[position+8], data[position+9], data[position+10], data[position+11],
+            data[position+12], data[position+13], data[position+14], data[position+15]
+        ]);
+        position += 16;
+        
+        // 反序列化data
+        let data_len = u64::from_le_bytes([data[position], data[position+1], data[position+2], data[position+3], 
+                                         data[position+4], data[position+5], data[position+6], data[position+7]]);
+        position += 8;
+        let data = data[position..position+data_len as usize].to_vec();
+
+        Ok(Block { header: BlockHeader { id, ver, etag, total_size, real_size, compressed, encrypted, 
+            chunk_list, created_at, updated_at }, data })
+    }
+    
+    /// 从block中删除指定的chunk
+    pub fn remove_chunk(&mut self, chunk: &Chunk) -> Result<bool> {
+        debug!("remove_chunk - removing chunk {} from block {}", chunk.hash, self.header.id);
+        
+        // 找到要删除的chunk在block中的位置和偏移量
+        let mut chunk_index = None;
+        let mut offset = 0;
+        let mut target_offset = 0;
+        
+        for (i, chunk_info) in self.header.chunk_list.iter().enumerate() {
+            if chunk_info.hash == chunk.hash {
+                chunk_index = Some(i);
+                target_offset = offset;
+                break;
+            }
+            offset += chunk_info.size as usize;
+        }
+        
+        // 如果找不到chunk，返回错误
+        if chunk_index.is_none() {
+            debug!("remove_chunk - chunk {} not found in block {}", chunk.hash, self.header.id);
+            return Err(ChunkDataNotFound {
+                block_id: chunk.block_id.clone(),
+                hash: chunk.hash.clone()
+            }.into());
+        }
+        
+        let chunk_index = chunk_index.unwrap();
+        let chunk_size = self.header.chunk_list[chunk_index].size as usize;
+        
+        // 从chunk_list中删除该chunk
+        self.header.chunk_list.remove(chunk_index);
+        
+        // 从data中删除该chunk的数据
+        if target_offset + chunk_size <= self.data.len() {
+            // 创建新的数据向量，不包含要删除的chunk
+            let mut new_data = Vec::with_capacity(self.data.len() - chunk_size);
+            // 添加删除位置之前的数据
+            new_data.extend_from_slice(&self.data[0..target_offset]);
+            // 添加删除位置之后的数据
+            new_data.extend_from_slice(&self.data[target_offset + chunk_size..]);
+            self.data = new_data;
+        } else {
+            return Err(ChunkDataNotFound {
+                block_id: chunk.block_id.clone(),
+                hash: chunk.hash.clone()
+            }.into());
+        }
+        
+        // 更新block的总大小
+        self.header.total_size -= chunk.size as i64;
+        self.header.updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        
+        debug!("remove_chunk - successfully removed chunk {} from block {}", chunk.hash, self.header.id);
+        Ok(true)
+    }
 }
 
 // 确保只导入一次CacheItem特性
@@ -156,6 +370,7 @@ pub fn get_block_path(block_id: &str) -> PathBuf {
     Path::new("blocks").join(dir1).join(dir2).join(dir3).join(block_id)
 }
 
+#[instrument(level = "error", skip_all)]
 pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
     // 构建缓存键
     let cache_key = format!("{}:{}", key_prefix::BLOCK, block_id);
@@ -194,9 +409,11 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
             return Err(BlockReadFailed { block_id: block_id.to_string(), error: e.to_string() }.into());
         }
     };
+
+    error!("read_block - block read: {}, path: {:?}, block size :{}", block_id, block_path, block_data.len());
     
     // 反序列化block数据
-    let mut block: Block = match bincode::deserialize(&block_data) {
+    let mut block: Block = match Block::deserialize(&block_data) {
         Ok(block) => block,
         Err(e) => {
             error!("read_block - failed to deserialize block: {}, error: {:?}", block_id, e);
@@ -290,10 +507,14 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
 }
 
 /// 对block数据进行压缩、加密处理并保存到磁盘
+// #[instrument(level = "error", skip_all)]
 pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
+    let start_time = std::time::Instant::now();
+
     // 创建block的副本，避免修改原始数据
     let mut saved_block = block.clone();
-
+    error!("put_chunks - prepare save block 2 took {}ms",  start_time.elapsed().as_millis());
+    
     // 打印 block信息
     error!("save_block - block id {}, data len {}", saved_block.header.id, saved_block.data.len());
 
@@ -330,7 +551,7 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
     let cache_key = format!("{}:{}", key_prefix::BLOCK, saved_block.header.id);
     let boxed_block: Box<dyn CacheItem + Send + Sync> = Box::new(saved_block.clone());
     G_CHUNK_BLOCK_CACHE.put(cache_key, boxed_block, |b| b.size());
-
+    error!("put_chunks - prepare save block 2 took {}ms",  start_time.elapsed().as_millis());
     // 先压缩
     if fs.block_conf.compress {
         info!("save_block - compressing block {} with zstd", saved_block.header.id);
@@ -357,7 +578,7 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
             }
         }
     }
-    
+    error!("put_chunks - prepare save block 3 took {}ms",  start_time.elapsed().as_millis());
     // 后加密
     if fs.block_conf.encrypt {
         info!("save_block - encrypting block {} with aes-gcm", saved_block.header.id);
@@ -373,7 +594,7 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
         saved_block.header.real_size = saved_block.data.len() as i64;
         info!("save_block - block {} encryption successful", saved_block.header.id);
     }
-    
+    error!("put_chunks - prepare save block 4 took {}ms",  start_time.elapsed().as_millis());
     // 保存block到磁盘
     let block_path = fs.data_path.join(get_block_path(&block.header.id));
     
@@ -410,9 +631,9 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
             actual_size: (saved_block.data.len() as i64).to_string()
         }));
     }
-
+    error!("put_chunks - prepare save block 5 took {}ms",  start_time.elapsed().as_millis());
     // 序列化并保存block
-    let block_data = match bincode::serialize(&saved_block) {
+    let block_data = match saved_block.serialize() {
         Ok(data) => data,
         Err(e) => {
             error!("save_block - failed to serialize block {}: {:?}", saved_block.header.id, e);
@@ -422,7 +643,8 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
             }));
         }
     };
-    
+    error!("put_chunks - prepare save block took {}ms",  start_time.elapsed().as_millis());
+
     match crate::memfs::write(&block_path, block_data) {
         Ok(_) => {},
         Err(e) => {
@@ -437,17 +659,20 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
     // 打印 block header
     debug!("save_block - block header: {:?}, data len {}", saved_block.header, saved_block.data.len());
     
+    error!("put_chunks - save block took {}ms",  start_time.elapsed().as_millis());
     Ok(saved_block)
 }
 
 /// 返回成功存储的block IDs列表
+// #[instrument(level = "error", skip_all)]
 pub fn put_chunks(chunks: Vec<Chunk>, fs: &DedupFS) -> Result<Set<String>> {
-    info!("put_chunks - starting processing {} chunks", chunks.len());
     if chunks.is_empty() {
         info!("put_chunks - no chunks provided, returning empty result");
         return Ok(Set::new());
     }
-    
+
+    info!("put_chunks - starting processing {} chunks", chunks.len());
+
     let mut block_ids: Set<String> = Set::new();
     
     // 获取DedupFS实例中的current_block（使用RefCell内部可变性）
@@ -466,8 +691,8 @@ pub fn put_chunks(chunks: Vec<Chunk>, fs: &DedupFS) -> Result<Set<String>> {
             }
         }
     };
-    
-    for chunk in chunks {
+   
+    for chunk in &chunks {
         if chunk.size != chunk.data.len() as i32 {
             error!("put_chunks - chunk size mismatch: {}, expected {}, actual {}", chunk.hash, chunk.size, chunk.data.len());
             return Err(ChunkSizeMismatch {
@@ -574,7 +799,7 @@ pub fn put_chunks(chunks: Vec<Chunk>, fs: &DedupFS) -> Result<Set<String>> {
             }
         }
     }
-
+    
     // 将当前block保存回DedupFS实例（使用RefCell内部可变性）
     *fs.current_block.borrow_mut() = Some(current_block);
     
@@ -582,7 +807,7 @@ pub fn put_chunks(chunks: Vec<Chunk>, fs: &DedupFS) -> Result<Set<String>> {
     Ok(block_ids)
 }
 
-pub fn remove_chunk(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
+pub fn remove_chunk_from_block(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
     info!("remove_chunk - removing chunk {} from block {}", chunk.hash, chunk.block_id);
     
     // 打印调用栈
@@ -592,8 +817,8 @@ pub fn remove_chunk(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
     // 根据 chunk block_id 获取 block
     let mut block = read_block(&chunk.block_id, fs)?;
     
-    // 调用提取的函数从block中删除chunk
-    remove_chunk_from_block(chunk, &mut block)?;
+    // 从block中删除chunk
+    block.remove_chunk(chunk)?;
     
     // 检查chunk_list是否为空，如果为空则删除block文件
     if block.header.chunk_list.is_empty() {
@@ -622,8 +847,8 @@ pub fn remove_chunk(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
         let mut maybe_current_block = fs.current_block.borrow_mut().take();
         
         if let Some(ref mut current_block) = maybe_current_block {
-            // 调用提取的函数从current_block中删除chunk
-            if let Err(e) = remove_chunk_from_block(chunk, current_block) {
+            // 从current_block中删除chunk
+            if let Err(e) = current_block.remove_chunk(chunk) {
                 debug!("remove_chunk - failed to update current_block: {:?}", e);
                 // 错误情况下也保留修改后的block
             }
@@ -642,58 +867,4 @@ pub fn remove_chunk(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
 }
 
 
-pub fn remove_chunk_from_block(chunk: &Chunk, block: &mut Block) -> Result<bool> {
-    debug!("remove_chunk_from_block - removing chunk {} from block", chunk.hash);
-    
-    // 找到要删除的chunk在block中的位置和偏移量
-    let mut chunk_index = None;
-    let mut offset = 0;
-    let mut target_offset = 0;
-    
-    for (i, chunk_info) in block.header.chunk_list.iter().enumerate() {
-        if chunk_info.hash == chunk.hash {
-            chunk_index = Some(i);
-            target_offset = offset;
-            break;
-        }
-        offset += chunk_info.size as usize;
-    }
-    
-    // 如果找不到chunk，返回错误
-    if chunk_index.is_none() {
-        debug!("remove_chunk_from_block - chunk {} not found", chunk.hash);
-        return Err(ChunkDataNotFound {
-            block_id: chunk.block_id.clone(),
-            hash: chunk.hash.clone()
-        }.into());
-    }
-    
-    let chunk_index = chunk_index.unwrap();
-    let chunk_size = block.header.chunk_list[chunk_index].size as usize;
-    
-    // 从chunk_list中删除该chunk
-    block.header.chunk_list.remove(chunk_index);
-    
-    // 从data中删除该chunk的数据
-    if target_offset + chunk_size <= block.data.len() {
-        // 创建新的数据向量，不包含要删除的chunk
-        let mut new_data = Vec::with_capacity(block.data.len() - chunk_size);
-        // 添加删除位置之前的数据
-        new_data.extend_from_slice(&block.data[0..target_offset]);
-        // 添加删除位置之后的数据
-        new_data.extend_from_slice(&block.data[target_offset + chunk_size..]);
-        block.data = new_data;
-    } else {
-        return Err(ChunkDataNotFound {
-            block_id: chunk.block_id.clone(),
-            hash: chunk.hash.clone()
-        }.into());
-    }
-    
-    // 更新block的总大小
-    block.header.total_size -= chunk.size as i64;
-    block.header.updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    
-    debug!("remove_chunk_from_block - successfully removed chunk {}", chunk.hash);
-    Ok(true)
-}
+// remove_chunk_from_block函数已迁移到Block::remove_chunk方法中

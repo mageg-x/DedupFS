@@ -1,6 +1,7 @@
 // daemonize.rs (修复版本)
 use anyhow::{ Context, Result };
 use serde::{ Deserialize, Serialize };
+use postcard::{from_bytes, to_stdvec};
 use tracing;
 use std::collections::HashMap;
 use std::sync::{ Arc, RwLock };
@@ -88,7 +89,7 @@ async fn handle_client_unix(
         })
     )?;
 
-    let command: Command = bincode::deserialize(&buffer).map_err(|e|
+    let command: Command = from_bytes(&buffer).map_err(|e|
         crate::errors::new(crate::errors::DeserializationError {
             error: e.to_string(),
         })
@@ -108,7 +109,7 @@ async fn handle_client_unix(
     };
 
     let response = response.unwrap_or_else(|e| Response::Error(e.to_string()));
-    let response_bytes = bincode::serialize(&response).map_err(|e|
+    let response_bytes = to_stdvec(&response).map_err(|e|
         crate::errors::new(crate::errors::SerializationError {
             error: e.to_string(),
         })
@@ -153,7 +154,7 @@ impl Client {
             })
         )?;
 
-        let command_bytes = bincode::serialize(&command).map_err(|e|
+        let command_bytes = to_stdvec(&command).map_err(|e|
             crate::errors::new(crate::errors::SerializationError {
                 error: e.to_string(),
             })
@@ -191,7 +192,7 @@ impl Client {
             })
         )?;
 
-        let response: Response = bincode::deserialize(&buffer).map_err(|e|
+        let response: Response = from_bytes(&buffer).map_err(|e|
             crate::errors::new(crate::errors::DeserializationError {
                 error: e.to_string(),
             })

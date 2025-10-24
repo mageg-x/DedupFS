@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::fmt::Display;
 use dashmap::DashMap;
 use tracing::{error, info};
+use postcard::{from_bytes, to_stdvec};
 use crate::errors::{DeserializationError, FileSystemError, SerializationError};
 
 /// 数据类型前缀常量
@@ -126,7 +127,7 @@ impl KVStore {
         })? {
             Some(bytes) => {
                 info!("kvstore '{}': key found, value size: {} bytes, key: '{}'", self.instance_name, bytes.len(), String::from_utf8_lossy(key));
-                let value: T = bincode::deserialize(&bytes)
+                let value: T = from_bytes(&bytes)
                     .map_err(|e| {
                         error!("kvstore '{}': failed to deserialize value: {}, bytes size: {}, key: '{}'", self.instance_name, e, bytes.len(), String::from_utf8_lossy(key));
                         DeserializationError { error: format!("{}", e) }
@@ -147,7 +148,7 @@ impl KVStore {
     {
         info!("kvstore '{}': setting value for key ({} bytes): '{}'", self.instance_name, key.len(), String::from_utf8_lossy(key));
         
-        let serialized = bincode::serialize(value)
+        let serialized = to_stdvec(value)
             .map_err(|e| {
                 error!("kvstore '{}': failed to serialize value: {}, key: '{}'", self.instance_name, e, String::from_utf8_lossy(key));
                 SerializationError { error: format!("{}", e) }
@@ -252,7 +253,7 @@ impl KVStore {
         for op in ops {
             match op {
                 BatchOp::Set(key, value) => {
-                    let serialized = bincode::serialize(value)
+                    let serialized = to_stdvec(value)
                         .map_err(|e| {
                             error!("kvstore '{}': failed to serialize value in batch: {}, key: '{}'", self.instance_name, e, String::from_utf8_lossy(key));
                             SerializationError { error: format!("{}", e) }

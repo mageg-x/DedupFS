@@ -268,7 +268,7 @@ pub fn remove_chunk(hash: &str, fs: &DedupFS) -> Result<()> {
         info!("remove_chunk - chunk {} ref_count is 0, removing from block {}", hash, chunk.block_id);
         
         // 从block中删除chunk数据
-        crate::block::remove_chunk(&chunk, fs)?;
+        crate::block::remove_chunk_from_block(&chunk, fs)?;
         
         // 从kv_store中删除chunk元数据
         fs.kv_store.del(&chunk_key)?;

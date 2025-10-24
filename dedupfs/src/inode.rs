@@ -1,11 +1,10 @@
-use bincode::de;
 use fuser::{FileType, FileAttr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 use dashmap::DashMap;
 use std::sync::{Arc, LazyLock};
 use crate::chunk::{Chunk, do_chunking, calc_hash};
@@ -703,6 +702,7 @@ impl INode {
     }
 }
 
+// #[instrument(level = "error", skip_all)]
 pub fn get_inode(ino: u64, fs: &DedupFS) -> Result<Option<INode>> { 
     // 生成缓存key
     let cache_key = format!("{}:{}", fs.id, ino);
@@ -779,7 +779,7 @@ pub fn save_inode(inode: &INode, fs: &DedupFS) -> Result<()> {
     
     // 保存有数据的chunks
     if !chunks_to_save.is_empty() {
-        info!("saving  {} data chunks for inode {}", chunks_to_save.len(), inode.ino);
+        error!("saving  {} data chunks for inode {}", chunks_to_save.len(), inode.ino);
         crate::block::put_chunks(chunks_to_save, fs)?;
     }
     

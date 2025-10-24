@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fuser::{Filesystem, FileAttr, FileType,  MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry, ReplyEmpty, ReplyWrite, ReplyOpen, ReplyStatfs,ReplyLseek, ReplyLock, ReplyXattr, Request, TimeOrNow};
 use crate::inode::{INode};
-use tracing::{info, error};
+use tracing::{info, error, instrument};
 use crate::kvstore::{KVStore, key_prefix, make_prefixed_key};
 use std::sync::Arc;
 use crate::config::{ChunkConfig, BlockConfig};
@@ -60,7 +60,7 @@ impl DedupFS {
         
         let block_conf = BlockConfig {
             size: 64 * 1024 * 1024, // 64MB
-            compress: true,
+            compress: false,
             encrypt: false,
             compress_level: 3,
         };
@@ -230,7 +230,9 @@ impl DedupFS {
     }
 }
 
+
 impl Filesystem for DedupFS {
+    // #[instrument(level = "error", skip_all)]
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_str = name.to_str().unwrap_or("");
         info!("filesystem::lookup - parent: {}, name: {}", parent, name_str);
@@ -245,6 +247,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn getattr(&mut self, _req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         info!("filesystem::getattr - ino: {}, fh: {:?}", ino, _fh);
         match crate::inode::get_inode(ino, self) {
@@ -268,6 +271,7 @@ impl Filesystem for DedupFS {
     // 偏移量1： "."
     // 偏移量2： ".."
     // 从3开始，每个子项分配一个偏移量，按子项的 inode 排序。
+    // #[instrument(level = "error", skip_all)]
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
         info!("filesystem::readdir - ino: {}, fh: {}, offset: {}", ino, _fh, offset);
         
@@ -333,6 +337,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, _mode: u32, _umask: u32, reply: ReplyEntry) {
         let name_str = name.to_str().unwrap_or("");
         info!("filesystem::mkdir - parent: {}, name: {}, mode: {}, umask: {}", parent, name_str, _mode, _umask);
@@ -365,6 +370,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
         let name_str = name.to_str().unwrap_or("");
         info!("filesystem::unlink - parent: {}, name: {}", parent, name_str);
@@ -400,6 +406,7 @@ impl Filesystem for DedupFS {
     }
 
 
+    // #[instrument(level = "error", skip_all)]
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
         let name_str = name.to_str().unwrap_or("");
         info!("filesystem::rmdir - parent: {}, name: {}", parent, name_str);
@@ -450,6 +457,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn rename(&mut self, _req: &Request, parent: u64, name: &OsStr, newparent: u64, newname: &OsStr, _flags: u32, reply: ReplyEmpty) {
         let name_str = name.to_str().unwrap_or("");
         let newname_str = newname.to_str().unwrap_or("");
@@ -511,6 +519,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn create(&mut self, _req: &Request, parent: u64, name: &OsStr, _mode: u32, _umask: u32, flags: i32, reply: ReplyCreate) {
         let name_str = name.to_str().unwrap_or("");
         info!("filesystem::create - parent: {}, name: {}, mode: {}, umask: {}, flags: {}", parent, name_str, _mode, _umask, flags);
@@ -567,6 +576,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
         info!("filesystem::open - ino: {}, flags: {}", ino, flags);
         if let Ok(Some(_)) = crate::inode::get_inode(ino, self) { 
@@ -577,6 +587,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, _flags: i32, _lock: Option<u64>, reply: ReplyData) {
         info!("filesystem::read - ino: {}, fh: {}, offset: {}, size: {}, flags: {}, lock: {:?}", ino, _fh, offset, size, _flags, _lock);
         match crate::inode::get_inode(ino, self) {
@@ -610,6 +621,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn write(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, data: &[u8], _write_flags: u32, _flags: i32, _lock: Option<u64>, reply: ReplyWrite) {
         info!("filesystem::write - ino: {}, fh: {}, offset: {}, data_len: {}, write_flags: {}, flags: {}, lock: {:?}", ino, _fh, offset, data.len(), _write_flags, _flags, _lock);
         
@@ -647,6 +659,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn release(&mut self, _req: &Request, _ino: u64, _fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) { 
         info!("filesystem::release - ino: {}, fh: {}, flags: {}, lock_owner: {:?}, flush: {}", _ino, _fh, _flags, _lock_owner, _flush);
         // 保存更新的元数据
@@ -656,6 +669,7 @@ impl Filesystem for DedupFS {
         reply.ok(); 
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) { 
         info!("filesystem::statfs - ino: {}", _ino);
 
@@ -694,6 +708,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn setattr(&mut self, _req: &Request, ino: u64, mode: Option<u32>, uid: Option<u32>, gid: Option<u32>, size: Option<u64>, atime: Option<TimeOrNow>, mtime: Option<TimeOrNow>, _ctime: Option<SystemTime>, _fh: Option<u64>, _crtime: Option<SystemTime>, _chgtime: Option<SystemTime>, _bkuptime: Option<SystemTime>, _flags: Option<u32>, reply: ReplyAttr) {
         info!("filesystem::setattr - ino: {}, mode: {:?}, uid: {:?}, gid: {:?}, size: {:?}, atime: {:?}, mtime: {:?}, fh: {:?}", ino, mode, uid, gid, size, atime, mtime, _fh);
         // 如果需要调整大小，先获取路径信息
@@ -766,6 +781,7 @@ impl Filesystem for DedupFS {
     }
 
     // 其他必要的方法实现
+    // #[instrument(level = "error", skip_all)]
     fn flush(&mut self, _req: &Request, ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         info!("filesystem::flush - ino: {}, fh: {}, lock_owner: {}", ino, _fh, _lock_owner);
         if let Ok(Some(_)) = crate::inode::get_inode(ino, self) { 
@@ -776,6 +792,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn fsync(&mut self, _req: &Request, ino: u64, _fh: u64, datasync: bool, reply: ReplyEmpty) {
         info!("filesystem::fsync - ino: {}, fh: {}, datasync: {}", ino, _fh, datasync);
         if let Ok(Some(inode)) = crate::inode::get_inode(ino, self) {
@@ -786,6 +803,7 @@ impl Filesystem for DedupFS {
             reply.error(ENOENT);
         }
     }
+    // #[instrument(level = "error", skip_all)]
     fn symlink(&mut self, _req: &Request, parent: u64, name: &OsStr, target: &Path, reply: ReplyEntry) {
         info!("filesystem::symlink - parent: {}, name: {}, target: {}", parent, name.to_string_lossy(), target.display());
         
@@ -845,6 +863,7 @@ impl Filesystem for DedupFS {
     }
 
         /// Read symbolic link.
+    // #[instrument(level = "error", skip_all)]
     fn readlink(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyData) {
         info!("filesystem::readlink - ino: {}", ino);
         
@@ -869,6 +888,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn access(&mut self, _req: &Request<'_>, ino: u64, mask: i32, reply: ReplyEmpty) {
         info!("filesystem::access - ino: {}, mask: {}", ino, mask);
         
@@ -923,6 +943,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn lseek(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, whence: i32, reply: ReplyLseek) {
         info!("filesystem::lseek - ino: {}, offset: {}, whence: {}", ino, offset, whence);
         
@@ -960,6 +981,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn getlk(&mut self, _req: &Request, ino: u64, _fh: u64, _lock_owner: u64, _start: u64, _end: u64, _typ: i32, _pid: u32, reply: ReplyLock) {
         info!("filesystem::getlk - ino: {}, fh: {}, lock_owner: {}, start: {}, end: {}, typ: {}, pid: {}", 
               ino, _fh, _lock_owner, _start, _end, _typ, _pid);
@@ -968,6 +990,7 @@ impl Filesystem for DedupFS {
         reply.error(libc::ENOSYS);
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn setlk(&mut self, _req: &Request, ino: u64, _fh: u64, _lock_owner: u64, _start: u64, _end: u64, _typ: i32, _pid: u32, _sleep: bool, reply: ReplyEmpty) {
         info!("filesystem::setlk - ino: {}, fh: {}, lock_owner: {}, start: {}, end: {}, typ: {}, pid: {}, sleep: {}", 
               ino, _fh, _lock_owner, _start, _end, _typ, _pid, _sleep);
@@ -976,6 +999,7 @@ impl Filesystem for DedupFS {
         reply.error(libc::ENOSYS);
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn setxattr(&mut self, _req: &Request, ino: u64, name: &OsStr, value: &[u8], _flags: i32, _position: u32, reply: ReplyEmpty) {
         info!("filesystem::setxattr - ino: {}, name: {}, value: {}, flags: {}, position: {}", 
               ino, name.to_string_lossy(), value.len(), _flags, _position);
@@ -999,6 +1023,7 @@ impl Filesystem for DedupFS {
     }
 
 
+    // #[instrument(level = "error", skip_all)]
     fn getxattr(&mut self, _req: &Request, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
         info!("filesystem::getxattr - ino: {}, name: {}, size: {}", ino, name.to_string_lossy(), size);
         let name_str = name.to_str().unwrap_or("");
@@ -1037,6 +1062,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: ReplyXattr) {
         info!("filesystem::listxattr - ino: {}, size: {}", ino, size);
         if let Ok(Some(inode)) = crate::inode::get_inode(ino, self) {
@@ -1066,6 +1092,7 @@ impl Filesystem for DedupFS {
         }
     }
 
+    // #[instrument(level = "error", skip_all)]
     fn removexattr(&mut self, _req: &Request, ino: u64, name: &OsStr, reply: ReplyEmpty) {
         info!("filesystem::removexattr - ino: {}, name: {}", ino, name.to_string_lossy());
         let name_str = name.to_str().unwrap_or("");

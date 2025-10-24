@@ -1,4 +1,4 @@
-use tracing_subscriber::fmt::format::{ FormatEvent, FormatFields };
+use tracing_subscriber::fmt::format::{ FormatEvent, FmtSpan, FormatFields };
 use tracing_subscriber::registry::LookupSpan;
 use chrono::Utc;
 
@@ -60,5 +60,8 @@ pub fn init ( level : u8 ) {
         ::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
     // 初始化 tracing 日志
-    tracing_subscriber::fmt().with_env_filter(filter).event_format(LogFormat).init();
+    tracing_subscriber::fmt().with_env_filter(filter)
+        .event_format(LogFormat)
+        // .with_span_events(FmtSpan::CLOSE)
+        .init();
 }
