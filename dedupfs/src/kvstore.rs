@@ -9,6 +9,7 @@ use crate::errors::{DeserializationError, FileSystemError, SerializationError};
 pub mod key_prefix {
     pub const INODE: &str = "inode";
     pub const CHUNK: &str = "chunk";
+    pub const BLOCK: &str = "block";
 }
 
 /// KVStore 是一个基于 RocksDB 的键值存储封装，支持泛型

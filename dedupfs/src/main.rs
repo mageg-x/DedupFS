@@ -13,6 +13,7 @@ mod cache;
 mod utils;
 mod mount;
 mod vfile;
+mod memfs;
 mod daemon;
 mod cmd;
 mod errors;

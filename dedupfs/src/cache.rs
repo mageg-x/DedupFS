@@ -1,21 +1,23 @@
 use dashmap::DashMap;
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use std::time::{Instant};
+use std::any::{Any, TypeId};
 use tracing::{info, error};
 
 
-// 缓存项特质，用于计算大小
-pub trait CacheItem {
+// 缓存项特质，用于计算大小和类型转换
+pub trait CacheItem: Any + Send + Sync {
     // 获取项目大小的方法（用于计算缓存容量）
     fn size(&self) -> usize;
+    
+    // 转换为Any类型，用于类型向下转换
+    fn as_any(&self) -> &dyn Any;
+    
+    // 转换为Any类型的可变引用，用于可变类型向下转换
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-// 为Box<dyn CacheItem>实现CacheItem特质
-impl<T: CacheItem + ?Sized> CacheItem for Box<T> {
-    fn size(&self) -> usize {
-        (**self).size()
-    }
-}
+// 注意：每个实现CacheItem的具体类型都需要实现size方法
 
 // 缓存条目，包含值和访问时间
 struct CacheEntry<V> {
@@ -158,3 +160,5 @@ pub type SharedCache<K, V> = Arc<Cache<K, V>>;
 pub fn new_shared_cache<K: std::cmp::Eq + std::hash::Hash + Clone, V>(capacity: usize) -> SharedCache<K, V> {
     Arc::new(Cache::new(capacity))
 }
+
+// 注意：我们可以直接使用Rust标准库的downcast方法，不需要额外的特质

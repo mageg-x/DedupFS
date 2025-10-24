@@ -779,7 +779,7 @@ pub fn save_inode(inode: &INode, fs: &DedupFS) -> Result<()> {
     
     // 保存有数据的chunks
     if !chunks_to_save.is_empty() {
-        info!("saving {} data chunks for inode {}", chunks_to_save.len(), inode.ino);
+        info!("saving  {} data chunks for inode {}", chunks_to_save.len(), inode.ino);
         crate::block::put_chunks(chunks_to_save, fs)?;
     }
     

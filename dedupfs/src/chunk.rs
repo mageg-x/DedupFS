@@ -1,5 +1,6 @@
 use blake3;
 use anyhow::Result;
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{RwLock, LazyLock};
 use fastcdc::v2020::FastCDC;
@@ -13,7 +14,7 @@ use crate::cache::{CacheItem, new_shared_cache, SharedCache};
 use crate::errors::{ChunkNotFound, ChunkDataNotFound};
 
 // 创建全局缓存实例，容量为2GB
-static G_CHUNK_CACHE: LazyLock<SharedCache<String, Box<dyn CacheItem + Send + Sync>>> = LazyLock::new(|| new_shared_cache(2 * 1024 * 1024 * 1024));
+pub static G_CHUNK_BLOCK_CACHE: LazyLock<SharedCache<String, Box<dyn CacheItem + Send + Sync>>> = LazyLock::new(|| new_shared_cache(2 * 1024 * 1024 * 1024));
 
 /// Chunk 结构表示一个数据块
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,7 +53,7 @@ impl Chunk {
     }
 }
 
-// 实现CacheItem特质，用于缓存
+// 实现CacheItem特质，用于缓存和类型转换
 impl CacheItem for Chunk {
     // 返回chunk的大小，用于缓存容量计算
     fn size(&self) -> usize {
@@ -61,6 +62,16 @@ impl CacheItem for Chunk {
         self.hash.len() + 
         self.block_id.len() + 
         12 // size(4) + ref_count(4) + 其他字段的估计(4)
+    }
+    
+    // 转换为Any类型
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    // 转换为Any类型的可变引用
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -135,9 +146,9 @@ pub fn get_chunk_meta(hash: &str, fs: &DedupFS) -> Result<Chunk> {
     let hash_string = hash.to_string();
     
     // 先从全局缓存中读取
-    let cache_key = format!("{}:{}", fs.id, hash_string);
+    let cache_key = format!("{}:{}:{}", key_prefix::CHUNK, fs.id, hash_string);
     // 重新实现缓存读取逻辑，避免在trait object上调用clone
-    if let Some(chunk_arc) = G_CHUNK_CACHE.get(&cache_key) {
+    if let Some(chunk_arc) = G_CHUNK_BLOCK_CACHE.get(&cache_key) {
         // 按照编译器建议，使用引用方式进行类型转换
         let chunk_box_ptr = &*chunk_arc as *const _ as *const Box<Chunk>;
         if !chunk_box_ptr.is_null() {
@@ -167,8 +178,8 @@ pub fn get_chunk_meta(hash: &str, fs: &DedupFS) -> Result<Chunk> {
         })?;
     
     // 使用全局缓存，key为fs.id + ":" + hash
-    let cache_key = format!("{}:{}", fs.id, hash_string);
-    G_CHUNK_CACHE.put(cache_key, Box::new(chunk.clone()), |item| item.size());
+    let cache_key = format!("{}:{}:{}",key_prefix::CHUNK, fs.id, hash_string);
+    G_CHUNK_BLOCK_CACHE.put(cache_key, Box::new(chunk.clone()), |item| item.size());
     
     info!("successfully retrieved chunk metadata with hash: {}, size: {}, ref_count: {}, block_id: {}", 
          hash, chunk.size, chunk.ref_count, chunk.block_id);
@@ -229,8 +240,8 @@ pub fn get_chunk_data(hash: &str, fs: &DedupFS) -> Result<Chunk> {
     chunk.data = chunk_data;
     
     // 使用全局缓存，key为fs.id + ":" + hash
-    let cache_key = format!("{}:{}", fs.id, hash);
-    G_CHUNK_CACHE.put(cache_key, Box::new(chunk.clone()), |item| item.size());
+    let cache_key = format!("{}:{}:{}",key_prefix::CHUNK, fs.id, hash);
+    G_CHUNK_BLOCK_CACHE.put(cache_key, Box::new(chunk.clone()), |item| item.size());
     
     info!("successfully retrieved chunk with hash: {}, size: {}", hash, chunk.size);
     
@@ -264,8 +275,8 @@ pub fn remove_chunk(hash: &str, fs: &DedupFS) -> Result<()> {
         info!("remove_chunk - chunk {} deleted from kv_store", hash);
         
         // 从缓存中移除
-        let cache_key = format!("{}:{}", fs.id, hash);
-        G_CHUNK_CACHE.del(&cache_key);
+        let cache_key = format!("{}:{}:{}", key_prefix::CHUNK, fs.id, hash);
+        G_CHUNK_BLOCK_CACHE.del(&cache_key);
         info!("remove_chunk - chunk {} removed from cache", hash);
     } else {
         // 如果引用计数大于0，保存更新后的chunk到kv_store
@@ -273,8 +284,8 @@ pub fn remove_chunk(hash: &str, fs: &DedupFS) -> Result<()> {
         info!("remove_chunk - updated chunk {} with ref_count {} saved to kv_store", hash, chunk.ref_count);
         
         // 更新缓存
-        let cache_key = format!("{}:{}", fs.id, hash);
-        G_CHUNK_CACHE.put(cache_key, Box::new(chunk.clone()), |item| item.size());
+        let cache_key = format!("{}:{}:{}",key_prefix::CHUNK, fs.id, hash);
+        G_CHUNK_BLOCK_CACHE.put(cache_key, Box::new(chunk.clone()), |item| item.size());
     }
     
     info!("remove_chunk - successfully processed chunk {}", hash);

@@ -49,6 +49,7 @@ define_error!(pub BlockDeleteFailed, "failed to delete block: {error}", error);
 define_error!(pub BlockSizeMismatch, "block size mismatch: {block_id}, expected: {expected_size}, actual: {actual_size}", block_id, expected_size, actual_size);
 
 // 分块相关错误
+define_error!(pub ChunkSizeMismatch, "chunk size mismatch: {hash}, expected: {expected_size}, actual: {actual_size}", hash, expected_size, actual_size);
 define_error!(pub ChunkSizeConversionError, "failed to convert chunk size {size}: {error}", size, error);
 define_error!(pub ChunkRefCountUpdateFailed, "failed to update chunk {hash} ref_count: {error}", hash, error);
 define_error!(pub ChunkMetadataSaveFailed, "failed to save chunk metadata for {hash}: {error}", hash, error);
