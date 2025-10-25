@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use tracing::{error, info, instrument};
+use tracing::{error, info, debug, instrument};
 use dashmap::DashMap;
 use std::sync::{Arc, LazyLock};
 use crate::chunk::{Chunk, do_chunking, calc_hash};
@@ -270,86 +270,50 @@ impl INode {
         
         // 情况1: 在文件末尾或超出文件末尾的写入（包括append和空洞写入）
         if offset >= self.size {
-            // 如果有最后一个chunk，尝试扩展它
-            if let Some(mut last_inode_chunk) = self.chunks.pop() {
-                // 优先使用last_inode_chunk.data
-                // 如果data为空，先从KVStore获取数据
+            // 初始化或获取chunk进行操作
+            let mut chunk = if let Some(mut last_inode_chunk) = self.chunks.pop() {
+                // 如果有最后一个chunk且data为空，尝试从KVStore获取数据
+
                 if last_inode_chunk.data.is_empty() {
-                    match crate::chunk::get_chunk_data(&last_inode_chunk.hash, fs) {
-                        Ok(chunk) => {
-                            last_inode_chunk.data = chunk.data;
+                    // 先获取chunk元数据
+                    match crate::chunk::get_chunk_meta(&last_inode_chunk.hash, fs) {
+                        Ok(chunk_meta) => {
+                            if chunk_meta.size > fs.block_conf.size.try_into().unwrap() {
+                                // 如果chunk大小大于block大小，创建新的INodeChunk
+                                // 这里不加载数据，只需要保持last_inode_chunk.data为空
+                                last_inode_chunk = INodeChunk { hash: String::new(),data: Vec::new()};
+                                debug!("chunk size {} exceeds block size {}, creating new chunk", chunk_meta.size, fs.block_conf.size);
+                            } else {
+                                // 否则加载chunk数据
+                                if let Ok(chunk_data) = crate::chunk::get_chunk_data(&last_inode_chunk.hash, fs) {
+                                    last_inode_chunk.data = chunk_data.data;
+                                } else {
+                                    last_inode_chunk = INodeChunk { hash: String::new(),data: Vec::new()};
+                                    error!("failed to get chunk data for hash: {}", last_inode_chunk.hash);
+                                }
+                            }
                         },
                         Err(e) => {
-                            error!("failed to get last chunk data: {}", e);
-                            // 如果获取失败，保持data为空
+                            error!("failed to get chunk meta: {}", e);
+                            last_inode_chunk = INodeChunk { hash: String::new(),data: Vec::new()};
                         }
                     }
                 }
-                
-                // 检查是否需要填充空洞
-                if offset > self.size {
-                    let hole_size = offset - self.size;
-                    last_inode_chunk.data.extend(vec![0u8; hole_size as usize]);
-                }
-                
-                // 直接追加到最后一个chunk的data中
-                last_inode_chunk.data.extend_from_slice(data);
-                
-                // 检查大小是否超过 max_size ，如果超过则需要分块
-                if last_inode_chunk.data.len() > fs.chunk_conf.max_size {
-                    // 只有当数据大小超过阈值时才调用do_chunking
-                    let new_chunks = do_chunking(&last_inode_chunk.data, fs).map_err(|e| {
-                        error!("failed to rechunk data for inode {}: {}", self.ino, e);
-                        e
-                    })?;
-                    info!("rechunked data into {} chunks for inode {}", new_chunks.len(), self.ino);
-                    // 将do_chunking产生的chunk转为INodeChunk存储
-                    self.chunks.extend(new_chunks.iter().map(|c| INodeChunk {
-                        hash: c.hash.clone(),
-                        data: c.data.clone() // 保留数据在内存中
-                    }));
-                } else {
-                    // 如果没有超过avg_size，直接将修改后的chunk放回chunks中
-                    // 需要计算hash，直接使用calc_hash函数避免内存拷贝
-                    last_inode_chunk.hash = calc_hash(&last_inode_chunk.data);
-                    self.chunks.push(last_inode_chunk);
-                }
+                last_inode_chunk
             } else {
-                // 如果没有现有chunk，创建新的INodeChunk
-                let mut new_inode_chunk = INodeChunk {
-                    hash: String::new(),
-                    data: Vec::new()
-                };
-                
-                // 如果需要填充空洞
-                if offset > self.size {
-                    let hole_size = offset - self.size;
-                    new_inode_chunk.data.extend(vec![0u8; hole_size as usize]);
-                }
-                
-                // 添加实际数据
-                new_inode_chunk.data.extend_from_slice(data);
-                
-                // 检查大小是否超过 max_size
-                if new_inode_chunk.data.len() > fs.chunk_conf.max_size {
-                    // 需要分块
-                    let new_chunks = do_chunking(&new_inode_chunk.data, fs).map_err(|e| {
-                        error!("failed to chunk new data for inode {}: {}", self.ino, e);
-                        e
-                    })?;
-                    info!("created {} new chunks for inode {}", new_chunks.len(), self.ino);
-                    // 转为INodeChunk存储
-                    self.chunks.extend(new_chunks.iter().map(|c| INodeChunk {
-                        hash: c.hash.clone(),
-                        data: c.data.clone() // 保留数据在内存中
-                    }));
-                } else {
-                    // 计算hash并直接添加
-                    // 计算hash，避免内存拷贝
-                    new_inode_chunk.hash = calc_hash(&new_inode_chunk.data);
-                    self.chunks.push(new_inode_chunk);
-                }
+                // 创建新的INodeChunk
+                INodeChunk { hash: String::new(),data: Vec::new()}
+            };
+            
+            // 统一处理空洞填充和数据追加
+            if offset > self.size {
+                let hole_size = offset - self.size;
+                chunk.data.extend(vec![0u8; hole_size as usize]);
             }
+            chunk.data.extend_from_slice(data);
+            
+            // 将处理后的chunk放回chunks列表
+            self.chunks.push(chunk);
             
             // 更新文件大小
             self.update_size(write_end);
@@ -444,31 +408,12 @@ impl INode {
                 // 移除受影响的chunks
                 self.chunks.drain(affected_range);
                 
-                // 检查合并后的数据大小是否超过 max_size
-                if merged_data.len() > fs.chunk_conf.max_size {
-                    // 需要重新分块
-                    let new_chunks = do_chunking(&merged_data, fs).map_err(|e| {
-                        error!("failed to rechunk affected data for inode {}: {}", self.ino, e);
-                        e
-                    })?;
-                    info!("rechunked affected data into {} chunks for inode {}", new_chunks.len(), self.ino);
-                    
-                    // 插入新的INodeChunk，保留data在内存中
-                    let new_inode_chunks: Vec<INodeChunk> = new_chunks.iter().map(|c| INodeChunk {
-                        hash: c.hash.clone(),
-                        data: c.data.clone() // 保留数据在内存中
-                    }).collect();
-                    self.chunks.splice(start_idx..start_idx, new_inode_chunks);
-                } else {
-                    // 如果不超过avg_size，创建单个INodeChunk
-                    let mut new_inode_chunk = INodeChunk {
-                        hash: String::new(),
-                        data: merged_data
-                    };
-                    // 计算hash，避免内存拷贝
-                    new_inode_chunk.hash = calc_hash(&new_inode_chunk.data);
-                    self.chunks.insert(start_idx, new_inode_chunk);
-                }
+                let new_inode_chunk = INodeChunk {
+                    hash: String::new(),
+                    data: merged_data
+                };
+
+                self.chunks.insert(start_idx, new_inode_chunk);
             }
             
             // 更新文件大小
@@ -553,32 +498,12 @@ impl INode {
             // 移除受影响的chunks
             self.chunks.drain(affected_range);
             
-            // 检查合并后的数据大小是否超过 max_size
-            if merged_data.len() > fs.chunk_conf.max_size {
-                // 需要重新分块
-                let new_chunks = do_chunking(&merged_data, fs).map_err(|e| {
-                    error!("failed to rechunk overlay data for inode {}: {}", self.ino, e);
-                    e
-                })?;
-                info!("rechunked overlay data into {} chunks for inode {}", new_chunks.len(), self.ino);
-                
-                // 插入新的INodeChunk，保留data在内存中
-                let new_inode_chunks: Vec<INodeChunk> = new_chunks.iter().map(|c| INodeChunk {
-                    hash: c.hash.clone(),
-                    data: c.data.clone() // 保留数据在内存中
-                }).collect();
-                self.chunks.splice(start_idx..start_idx, new_inode_chunks);
-            } else {
-                // 如果不超过avg_size，创建单个INodeChunk
-                let mut new_inode_chunk = INodeChunk {
-                    hash: String::new(),
-                    data: merged_data
-                };
-                
-                // 计算hash，避免内存拷贝
-                new_inode_chunk.hash = calc_hash(&new_inode_chunk.data);
-                self.chunks.insert(start_idx, new_inode_chunk);
-            }
+            let new_inode_chunk = INodeChunk {
+                hash: String::new(),
+                data: merged_data
+            };
+
+            self.chunks.insert(start_idx, new_inode_chunk);
         }
         
         // 更新修改时间
@@ -729,9 +654,15 @@ pub fn get_inode(ino: u64, fs: &DedupFS) -> Result<Option<INode>> {
     }
 }
 
-pub fn save_inode(inode: &INode, fs: &DedupFS) -> Result<()> { 
-    info!("saving inode {} for filesystem {}", inode.ino, fs.id);
-    
+pub fn save_inode(inode: &mut INode, fs: &DedupFS) -> Result<()> { 
+    error!("saving inode {}, {} chunks for filesystem {}", inode.ino, inode.chunks.len(), fs.id);
+    // 处理 inode 的 chunks, 计算 chunk 的 hash
+    for inode_chunk in &mut inode.chunks {
+        if !inode_chunk.data.is_empty() {
+            inode_chunk.hash = calc_hash(&inode_chunk.data);
+        }
+    }
+
     // 先从kv_store 获取已有的 inode ， 放到 old_inode 中
     let key = make_prefixed_key(key_prefix::INODE, inode.ino.to_string().as_bytes());
     let old_inode = match fs.kv_store.get::<INode>(&key) {
@@ -779,8 +710,13 @@ pub fn save_inode(inode: &INode, fs: &DedupFS) -> Result<()> {
     
     // 保存有数据的chunks
     if !chunks_to_save.is_empty() {
-        info!("saving  {}:{} data chunks for inode {}, {}", chunks_to_save.len(), inode.chunks.len(), inode.ino, inode.name);
+        error!("saving {} data chunks for inode {}, {}", chunks_to_save.len(), inode.ino, inode.name);
         crate::block::put_chunks(chunks_to_save, fs)?;
+        
+        // 保存成功后，清空INodeChunk中的data字段，避免下次重复保存
+        for inode_chunk in &mut inode.chunks {
+            inode_chunk.data.clear();
+        }
     }
     
     // 保存 inode 元数据到 kv_store
@@ -833,7 +769,7 @@ pub fn remove_inode(ino: u64, fs: &DedupFS) -> Result<()> {
     Ok(())
 }
 
-pub fn cache_inode(inode: &INode, fs: &DedupFS) -> Result<()> { 
+pub fn cache_inode(inode: &mut INode, fs: &DedupFS) -> Result<()> { 
     info!("caching inode {} for filesystem {}", inode.ino, fs.id);
 
     // 计算 inode.chunks 的 的数据大小

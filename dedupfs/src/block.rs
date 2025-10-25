@@ -257,7 +257,8 @@ impl Block {
     
     /// 从block中删除指定的chunk
     pub fn remove_chunk(&mut self, chunk: &Chunk) -> Result<bool> {
-        debug!("remove_chunk - removing chunk {} from block {}", chunk.hash, self.header.id);
+        error!("remove_chunk - removing chunk {} ,size {}  from block {} , size {}", 
+            chunk.hash, chunk.size,  self.header.id, self.header.total_size);
         
         // 找到要删除的chunk在block中的位置和偏移量
         let mut chunk_index = None;
@@ -275,7 +276,7 @@ impl Block {
         
         // 如果找不到chunk，返回错误
         if chunk_index.is_none() {
-            debug!("remove_chunk - chunk {} not found in block {}", chunk.hash, self.header.id);
+            error!("remove_chunk - chunk {} not found in block {}", chunk.hash, self.header.id);
             return Err(ChunkDataNotFound {
                 block_id: chunk.block_id.clone(),
                 hash: chunk.hash.clone()
@@ -308,7 +309,7 @@ impl Block {
         self.header.total_size -= chunk.size as i64;
         self.header.updated_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         
-        debug!("remove_chunk - successfully removed chunk {} from block {}", chunk.hash, self.header.id);
+        error!("remove_chunk - successfully removed chunk {} from block {} size {}", chunk.hash, self.header.id, self.header.total_size);
         Ok(true)
     }
 }
@@ -363,7 +364,7 @@ pub fn get_block_path(block_id: &str) -> PathBuf {
     // 确保blockID长度足够
     if n < 9 {
         // 如果blockID太短，使用一种简化的路径结构
-        return Path::new("blocks").join("blocks").join(block_id);
+        return Path::new("blocks").join("default").join(block_id);
     }
     
     // 提取路径组件
@@ -861,7 +862,7 @@ pub fn remove_chunk_from_block(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
     if block.header.chunk_list.is_empty() {
         info!("remove_chunk - chunk_list is empty, deleting block {}", chunk.block_id);
         // 构建block文件路径
-        let block_file_path = fs.data_path.join(&chunk.block_id);
+        let block_file_path = fs.data_path.join(get_block_path(&chunk.block_id));
         // 删除block文件
         if let Err(e) = crate::memfs::remove_file(&block_file_path) {
             // 如果文件不存在，我们仍然视为成功
@@ -872,7 +873,7 @@ pub fn remove_chunk_from_block(chunk: &Chunk, fs: &DedupFS) -> Result<()> {
         }
     } else {
         // 重新保存block
-        info!("remove_chunk - saving updated block {}", chunk.block_id);
+        error!("remove_chunk - saving updated block {}", chunk.block_id);
         save_block(&block, &fs)?;
     }
     

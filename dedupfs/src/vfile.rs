@@ -39,7 +39,8 @@ impl DedupFS {
         info!("dedupfs::new - mount_point: {}, data_root: {}", mount_point, data_root);
         // 计算挂载点的哈希值作为子目录名
         let mount_hash = format!("{:x}", md5::compute(mount_point.as_bytes()));
-        let base_path = PathBuf::from(data_root).join(&mount_hash);
+        // 使用绝对路径
+        let base_path = PathBuf::from(data_root).canonicalize()?.join(&mount_hash);
         let meta_path = base_path.join("meta");
         let data_path = base_path.join("data");
 
@@ -83,12 +84,12 @@ impl DedupFS {
             let root_ino = 1; // 根目录固定为1
             fs.next_inode.store(2, Ordering::SeqCst); // 设置下一个可用inode
             
-            let root_inode = INode::new(root_ino, "/", 1, FileType::Directory);
+            let mut root_inode = INode::new(root_ino, "/", 1, FileType::Directory);
             
             // 初始化根目录的子节点映射
             fs.relation_map.insert(root_ino, BTreeSet::new());
             
-            crate::inode::save_inode(&root_inode, &fs)?;
+            crate::inode::save_inode(&mut root_inode, &fs)?;
             
             // 创建对应的数据目录
             let root_data_path = fs.data_path.clone();
@@ -169,7 +170,7 @@ impl DedupFS {
     pub fn create_node(&mut self, parent: u64, name: &str, kind: FileType) -> Result<INode> {
         info!("dedupfs::create_node - parent: {}, name: {}, kind: {:?}", parent, name, kind);
         let ino = self.next_inode.fetch_add(1, Ordering::SeqCst);
-        let inode = INode::new(ino, name, parent, kind);
+        let mut inode = INode::new(ino, name, parent, kind);
         
         // 构建完整路径（仅用于创建数据文件/目录）
         let parent_path = if parent == 1 { "/".to_string() } else { 
@@ -198,7 +199,7 @@ impl DedupFS {
         }
 
         // 保存元数据
-        crate::inode::save_inode(&inode, self)?;
+            crate::inode::save_inode(&mut inode, self);
 
         Ok(inode)
     }
@@ -235,6 +236,7 @@ impl Filesystem for DedupFS {
     fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
         // 设置最大写入块大小为 8MB
         _config.set_max_write(8 * 1024 * 1024);
+        error!("dedupfs::init  config is {:?}", _config);
         Ok(())
     }
 
@@ -509,7 +511,7 @@ impl Filesystem for DedupFS {
                 .insert(inode.ino);
 
             // 保存更新的元数据
-            let _ = crate::inode::save_inode(&inode, self);
+            let _ = crate::inode::save_inode(&mut inode, self);
 
             reply.ok();
         } else {
@@ -545,7 +547,7 @@ impl Filesystem for DedupFS {
                         inode.update_size(0);
                         saved_attr = Some(inode.to_file_attr());
                         // 保存更新的元数据
-                        if let Err(e) = crate::inode::save_inode(&inode, self) {
+                        if let Err(e) = crate::inode::save_inode(&mut inode, self) {
                             error!("filesystem::create - error saving metadata: {:?}", e);
                         }
                     },
@@ -638,8 +640,8 @@ impl Filesystem for DedupFS {
             // 使用DedupFS实例作为参数
             inode.write(offset as u64, data, self);
             
-            // 保存更新后的元数据
-            if crate::inode::cache_inode(&inode, self).is_err() {
+            // 保存更新的元数据
+            if crate::inode::cache_inode(&mut inode, self).is_err() {
                 error!("filesystem::write - error saving metadata for inode {}", ino);
                 reply.error(libc::EIO);
                 return;
@@ -657,8 +659,8 @@ impl Filesystem for DedupFS {
     fn release(&mut self, _req: &Request, _ino: u64, _fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) { 
         info!("filesystem::release - ino: {}, fh: {}, flags: {}, lock_owner: {:?}, flush: {}", _ino, _fh, _flags, _lock_owner, _flush);
         // 保存更新的元数据
-        if let Ok(Some(inode)) = crate::inode::get_inode(_ino, self) {
-            let _ = crate::inode::save_inode(&inode, self);
+        if let Ok(Some(mut inode)) = crate::inode::get_inode(_ino, self) {
+            let _ = crate::inode::save_inode(&mut inode, self);
         }
         reply.ok(); 
     }
@@ -717,7 +719,7 @@ impl Filesystem for DedupFS {
                     return;
                 }
                 // 保存更新后的inode
-                if let Err(e) = crate::inode::cache_inode(&inode, self) {
+                if let Err(e) = crate::inode::cache_inode(&mut inode, self) {
                     error!("filesystem::setattr - failed to save inode {} after truncate: {:?}", ino, e);
                     reply.error(libc::EIO);
                     return;
@@ -760,7 +762,7 @@ impl Filesystem for DedupFS {
             inode.ctime = now;
             
             // 保存元数据
-            let _ = crate::inode::save_inode(&inode, self);
+            let _ = crate::inode::save_inode(&mut inode, self);
             
             // 返回更新后的属性
             let attr = inode.to_file_attr();
@@ -785,8 +787,8 @@ impl Filesystem for DedupFS {
 
     fn fsync(&mut self, _req: &Request, ino: u64, _fh: u64, datasync: bool, reply: ReplyEmpty) {
         info!("filesystem::fsync - ino: {}, fh: {}, datasync: {}", ino, _fh, datasync);
-        if let Ok(Some(inode)) = crate::inode::get_inode(ino, self) {
-            let _ = crate::inode::save_inode(&inode, self);
+        if let Ok(Some(mut inode)) = crate::inode::get_inode(ino, self) {
+            let _ = crate::inode::save_inode(&mut inode, self);
             reply.ok();
         } else {
             error!("filesystem::fsync - inode {} not found", ino);
@@ -839,7 +841,7 @@ impl Filesystem for DedupFS {
         inode.symlink_target = Some(target.to_string_lossy().to_string());
         
         // 保存元数据
-        if crate::inode::save_inode(&inode, self).is_err() {
+            if crate::inode::save_inode(&mut inode, self).is_err() {
             error!("filesystem::symlink - error saving metadata for inode {}", ino);
             reply.error(libc::EIO);
             return;
@@ -993,7 +995,7 @@ impl Filesystem for DedupFS {
             inode.set_xattr(name_str, value);
             
             // 保存更新后的元数据
-            if crate::inode::save_inode(&inode, self).is_err() {
+            if crate::inode::save_inode(&mut inode, self).is_err() {
                 error!("filesystem::setxattr - error saving metadata for inode {}", ino);
                 reply.error(libc::EIO);
                 return;
@@ -1080,14 +1082,14 @@ impl Filesystem for DedupFS {
         if let Ok(Some(mut inode)) = crate::inode::get_inode(ino, self) {
             // 使用inode内部的remove_xattr方法
             if !inode.remove_xattr(name_str) {
-            // 属性不存在
-            error!("filesystem::removexattr - xattr '{}' not found on inode {}", name_str, ino);
-            reply.error(libc::ENODATA);
-            return;
-        }
+                // 属性不存在
+                error!("filesystem::removexattr - xattr '{}' not found on inode {}", name_str, ino);
+                reply.error(libc::ENODATA);
+                return;
+            }
             
             // 保存更新后的元数据
-            if crate::inode::save_inode(&inode, self).is_err() {
+            if crate::inode::save_inode(&mut inode, self).is_err() {
                 error!("filesystem::removexattr - error saving metadata for inode {}", ino);
                 reply.error(libc::EIO);
                 return;

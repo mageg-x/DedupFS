@@ -203,7 +203,7 @@ pub fn get_chunk_data(hash: &str, fs: &DedupFS) -> Result<Chunk> {
     
     // 从元数据中获取block id（克隆以避免部分移动）
     let block_id = chunk.block_id.clone();
-    info!("found chunk metadata, retrieving from block: {}", block_id);
+    error!("found chunk metadata, retrieving from block: {}", block_id);
     
     // 调用read_block函数获取block数据
     let block = read_block(&block_id, fs)?;

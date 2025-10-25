@@ -200,13 +200,35 @@ impl MemFs {
         } else {
             info!("memfs: file not found in cache {:?}", full_path);
         }
-        
+
         // 从磁盘删除（如果存在）
         if full_path.exists() {
             info!("memfs: removing file from disk {:?}", full_path);
-            match fs::remove_file(&full_path) {
+            match std::fs::remove_file(&full_path) {
                 Ok(_) => {
                     info!("memfs: removed file from disk successfully");
+                    
+                    // 递归删除空的父目录，最多回溯3层
+                    // 直接尝试删除目录，rmdir在目录非空时会自动失败
+                    let mut path_opt = full_path.parent().map(|p| p.to_path_buf());
+                    for _ in 0..3 {
+                        if let Some(path) = path_opt {
+                            match fs::remove_dir(&path) {
+                                Ok(_) => {
+                                    info!("memfs: removed empty directory {:?}", path);
+                                    // 成功删除后继续尝试删除上一级目录
+                                    path_opt = path.parent().map(|p| p.to_path_buf());
+                                },
+                                Err(e) => {
+                                    // 目录非空或其他原因导致删除失败，停止回溯
+                                    info!("memfs: directory {:?} not empty or cannot be removed: {:?}", path, e);
+                                    break;
+                                }
+                            }
+                        } else {
+                            break; // 已到达文件系统根目录
+                        }
+                    }
                 },
                 Err(e) => {
                     error!("memfs: failed to remove file from disk {:?}: {:?}", full_path, e);
