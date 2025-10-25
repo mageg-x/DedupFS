@@ -1,9 +1,0 @@
-block:
-  size: 67108864
-  compress: true
-  encrypt: true
-  compress_level: 6
-chunk:
-  min_size: 1048576
-  avg_size: 2097152
-  max_size: 4194304
