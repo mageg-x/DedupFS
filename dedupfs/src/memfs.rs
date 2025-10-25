@@ -1,12 +1,19 @@
 use dashmap::DashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
-use std::fs;
-use std::sync::mpsc;
-use tracing::{info, error};
-// 使用 OnceCell 替代 unsafe static
-use once_cell::sync::OnceCell;
+  use std::path::{Path, PathBuf};
+  use std::sync::Arc;
+  use std::time::Duration;
+  use std::fs;
+  use std::sync::mpsc;
+  use tracing::{info, error};
+  use std::sync::Mutex;
+  use once_cell::sync::OnceCell;
+
+  // 定义处理器结构
+  #[derive(Debug, Clone)]
+  pub struct Processor {
+      pub func: fn(&[u8], &std::collections::HashMap<String, String>) -> Result<Vec<u8>, Box<dyn std::error::Error>>,
+      pub params: std::collections::HashMap<String, String>,
+  }
 
 static INSTANCE: OnceCell<MemFs> = OnceCell::new();
 
@@ -15,6 +22,7 @@ static INSTANCE: OnceCell<MemFs> = OnceCell::new();
 struct FileData {
     data: Vec<u8>,
     version: u64,
+    processor: Option<Processor>,
 }
 
 /// 获取内存文件系统实例（自动初始化）
@@ -24,16 +32,23 @@ fn get_instance() -> &'static MemFs {
     })
 }
 
-/// 与 std::fs::write 签名完全一致
-pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> std::io::Result<()> {
+/// 扩展了 std::fs::write 签名，添加了处理器参数
+pub fn write<P: AsRef<Path>, C: AsRef<[u8]>>(
+    path: P, 
+    contents: C,
+    processor: Option<Processor>
+) -> std::io::Result<()> {
     info!("memfs: public write called for {:?}", path.as_ref());
-    get_instance().write(path, contents)
+    get_instance().write(path, contents, processor)
 }
 
-/// 与 std::fs::read 签名完全一致  
-pub fn read<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<u8>> {
+/// 扩展了 std::fs::read 签名，添加了反处理器参数
+pub fn read<P: AsRef<Path>>(
+    path: P, 
+    unprocessor: Option<Processor>
+) -> std::io::Result<Vec<u8>> {
     info!("memfs: public read called for {:?}", path.as_ref());
-    get_instance().read(path)
+    get_instance().read(path, unprocessor)
 }
 
 /// 与 std::fs::remove_file 签名完全一致
@@ -77,11 +92,13 @@ impl MemFs {
         
         // 启动后台刷盘任务
         let cache_clone = cache.clone();
-        std::thread::spawn(move || {
-            info!("memfs: starting background flush task");
-            Self::flush_task(cache_clone, receiver);
-            info!("memfs: background flush task terminated");
-        });
+        std::thread::Builder::new()
+            .name("memfs_flush_thread".to_string())
+            .spawn(move || {
+                info!("memfs: starting background flush task");
+                Self::flush_task(cache_clone, receiver);
+                info!("memfs: background flush task terminated");
+            })?;
 
         info!("memfs: initialized successfully");
         Ok(Self {
@@ -89,37 +106,56 @@ impl MemFs {
             flush_sender: sender,
         })
     }
+    
+    // 注意：set_file_processors 方法已移除，处理器应在 write 调用时传入
 
-    fn write<P: AsRef<Path>, C: AsRef<[u8]>>(&self, path: P, contents: C) -> std::io::Result<()> {
+    fn write<P: AsRef<Path>, C: AsRef<[u8]>>(&self, path: P, contents: C, processor: Option<Processor>) -> std::io::Result<()> {
         let full_path = path.as_ref().to_path_buf();
-        let data_len = contents.as_ref().len();
+        let mut data_len = contents.as_ref().len();
         
-        // 原子性地更新或插入文件数据，版本号递增
+        // 克隆processor和full_path以避免移动问题
+        let processor_clone = processor.clone();
+        let full_path_clone = full_path.clone();
         self.cache.entry(full_path.clone()).and_modify(|file_data| {
             file_data.data = contents.as_ref().to_vec();
             file_data.version += 1;
-            info!("memfs: updated file {:?}, size: {}, version: {}", 
-                 full_path, data_len, file_data.version);
-        }).or_insert_with(|| {
-            info!("memfs: created new file {:?}, size: {}, version: 1", 
-                 full_path, data_len);
+            file_data.processor = processor.clone();
+            info!("memfs: updated file {:?}, size: {}, version: {}", full_path, data_len, file_data.version);
+        }).or_insert_with(move || {
+            data_len = contents.as_ref().len();
+            info!("memfs: created new file {:?}, size: {}, version: 1", full_path_clone, data_len);
             FileData {
                 data: contents.as_ref().to_vec(),
                 version: 1,
+                processor: processor_clone,
             }
         });
+        
+        // 发送刷新命令
+        self.flush_sender.send(FlushCommand::Paths(vec![full_path])).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("failed to send flush command: {:?}", e)))?;
         
         Ok(())
     }
 
-    fn read<P: AsRef<Path>>(&self, path: P) -> std::io::Result<Vec<u8>> {
+    fn read<P: AsRef<Path>>(&self, path: P, unprocessor: Option<Processor>) -> std::io::Result<Vec<u8>> {
         let full_path = path.as_ref().to_path_buf();
 
         // 先从内存读
         if let Some(file_data) = self.cache.get(&full_path) {
-            info!("memfs: read from cache {:?}, size: {}, version: {}", 
-                 full_path, file_data.data.len(), file_data.version);
-            return Ok(file_data.data.clone());
+            info!("memfs: read from cache {:?}, size: {}, version: {}", full_path, file_data.data.len(), file_data.version);
+            
+            // 使用传入的unprocessor进行处理
+            let data = file_data.data.clone();
+            if let Some(unprocessor) = unprocessor {
+                match (unprocessor.func)(&data, &unprocessor.params) {
+                    Ok(processed_data) => return Ok(processed_data),
+                    Err(e) => {
+                        error!("memfs: unprocess_data failed for {:?}: {:?}", full_path, e);
+                        return Ok(data); // 失败时返回原始数据
+                    }
+                }
+            }
+            return Ok(data);
         }
 
         // 内存没有，从磁盘读
@@ -128,6 +164,16 @@ impl MemFs {
             match std::fs::read(&full_path) {
                 Ok(data) => {
                     info!("memfs: read from disk successful, size: {}", data.len());
+                    // 使用传入的unprocessor进行处理
+                    if let Some(unprocessor) = unprocessor {
+                        match (unprocessor.func)(&data, &unprocessor.params) {
+                            Ok(processed_data) => return Ok(processed_data),
+                            Err(e) => {
+                                error!("memfs: unprocess_data failed for disk file {:?}: {:?}", full_path, e);
+                                return Ok(data); // 失败时返回原始数据
+                            }
+                        }
+                    }
                     Ok(data)
                 },
                 Err(e) => {
@@ -277,9 +323,9 @@ impl MemFs {
         
         for path in paths {
             // 克隆一份数据用于写入
-            let (data_to_write, version_to_write) = {
+            let (data_to_write, version_to_write, processor) = {
                 if let Some(file_data) = cache.get(&path) {
-                    (file_data.data.clone(), file_data.version)
+                    (file_data.data.clone(), file_data.version, file_data.processor.clone())
                 } else {
                     info!("memfs: flush_paths - file already removed from cache {:?}", path);
                     continue; // 数据已被其他线程移除
@@ -298,8 +344,23 @@ impl MemFs {
                 }
             }
             
+            // 尝试处理数据（压缩/加密）
+            let processed_data = if let Some(processor) = processor {
+                match (processor.func)(&data_to_write, &processor.params) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        error!("memfs: flush_paths - failed to process data for {:?}: {:?}", path, e);
+                        failure_count += 1;
+                        continue;
+                    }
+                }
+            } else {
+                // 没有处理器，返回原始数据
+                data_to_write.clone()
+            };
+            
             // 尝试写入磁盘
-            match std::fs::write(&path, &data_to_write) {
+            match std::fs::write(&path, &processed_data) {
                 Ok(_) => {
                     // 写入成功，尝试从缓存中移除
                     // 使用 remove_if 确保只移除版本号匹配的条目

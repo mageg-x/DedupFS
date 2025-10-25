@@ -8,7 +8,7 @@ use tracing;
 use anyhow::{ Context, Result };
 use sha2::{ Sha256, Digest };
 use std::ffi::OsStr;
-use fuser::MountOption;
+use fuser::{MountOption};
 use dashmap::DashMap;
 
 // 挂载点表，使用 DashMap 保证线程安全和高性能
@@ -144,17 +144,14 @@ pub fn mount_filesystem(mount_point: &Path, data_dir: &Path) -> Result<String> {
         )?;
     }
 
-    tracing::info!(
-        "mounting filesystem at: {}, data stored at: {}",
-        mount_path.display(),
-        data_dir.display()
-    );
+    tracing::info!("mounting filesystem at: {}, data stored at: {}",mount_path.display(),data_dir.display());
     // 使用 spawn_mount2 在后台线程中挂载文件系统
     let session = fuser::spawn_mount2(fs, &mount_path, &mount_options).map_err(|e|
         crate::errors::new(crate::errors::MountFailed {
             error: e.to_string(),
         })
     )?;
+
 
     // 将挂载点信息添加到挂载表中 - 使用 DashMap 的 insert 方法
     let data_dir_path = std::fs::canonicalize(data_dir).map_err(|e|

@@ -295,8 +295,8 @@ impl INode {
                 // 直接追加到最后一个chunk的data中
                 last_inode_chunk.data.extend_from_slice(data);
                 
-                // 检查大小是否超过avg_size，如果超过则需要分块
-                if last_inode_chunk.data.len() > fs.chunk_conf.avg_size {
+                // 检查大小是否超过 max_size ，如果超过则需要分块
+                if last_inode_chunk.data.len() > fs.chunk_conf.max_size {
                     // 只有当数据大小超过阈值时才调用do_chunking
                     let new_chunks = do_chunking(&last_inode_chunk.data, fs).map_err(|e| {
                         error!("failed to rechunk data for inode {}: {}", self.ino, e);
@@ -330,8 +330,8 @@ impl INode {
                 // 添加实际数据
                 new_inode_chunk.data.extend_from_slice(data);
                 
-                // 检查大小是否超过avg_size
-                if new_inode_chunk.data.len() > fs.chunk_conf.avg_size {
+                // 检查大小是否超过 max_size
+                if new_inode_chunk.data.len() > fs.chunk_conf.max_size {
                     // 需要分块
                     let new_chunks = do_chunking(&new_inode_chunk.data, fs).map_err(|e| {
                         error!("failed to chunk new data for inode {}: {}", self.ino, e);
@@ -444,8 +444,8 @@ impl INode {
                 // 移除受影响的chunks
                 self.chunks.drain(affected_range);
                 
-                // 检查合并后的数据大小是否超过avg_size
-                if merged_data.len() > fs.chunk_conf.avg_size {
+                // 检查合并后的数据大小是否超过 max_size
+                if merged_data.len() > fs.chunk_conf.max_size {
                     // 需要重新分块
                     let new_chunks = do_chunking(&merged_data, fs).map_err(|e| {
                         error!("failed to rechunk affected data for inode {}: {}", self.ino, e);
@@ -553,8 +553,8 @@ impl INode {
             // 移除受影响的chunks
             self.chunks.drain(affected_range);
             
-            // 检查合并后的数据大小是否超过avg_size
-            if merged_data.len() > fs.chunk_conf.avg_size {
+            // 检查合并后的数据大小是否超过 max_size
+            if merged_data.len() > fs.chunk_conf.max_size {
                 // 需要重新分块
                 let new_chunks = do_chunking(&merged_data, fs).map_err(|e| {
                     error!("failed to rechunk overlay data for inode {}: {}", self.ino, e);
@@ -779,7 +779,7 @@ pub fn save_inode(inode: &INode, fs: &DedupFS) -> Result<()> {
     
     // 保存有数据的chunks
     if !chunks_to_save.is_empty() {
-        error!("saving  {} data chunks for inode {}", chunks_to_save.len(), inode.ino);
+        info!("saving  {}:{} data chunks for inode {}, {}", chunks_to_save.len(), inode.chunks.len(), inode.ino, inode.name);
         crate::block::put_chunks(chunks_to_save, fs)?;
     }
     
@@ -839,9 +839,9 @@ pub fn cache_inode(inode: &INode, fs: &DedupFS) -> Result<()> {
     // 计算 inode.chunks 的 的数据大小
     let inode_size = inode.chunks.iter().map(|c| c.data.len()).sum::<usize>();
     
-    // 如果 inode_size 大于 fs.chunk_conf.max_size, 就些保存
-    if inode_size > fs.chunk_conf.max_size {
-        info!("inode {} size {} exceeds max_size {}, saving to kv_store", inode.ino, inode_size, fs.chunk_conf.max_size);
+    // 如果 inode_size 大于 fs.block_conf.size, 就保存, 避免一个几GB的文件全部在缓存中，撑爆内存
+    if inode_size > fs.block_conf.size {
+        info!("inode {} size {} exceeds max_size {}, saving to kv_store", inode.ino, inode_size, fs.block_conf.size);
         save_inode(inode, fs)?;
         return Ok(());
     } 

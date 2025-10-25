@@ -3,6 +3,7 @@ use clap::builder::Str;
 use dashmap::DashMap;
 use crate::errors::{BlockNotFound, BlockReadFailed, BlockDeleteFailed, BlockSizeMismatch, ChunkSizeMismatch, CompressionFailed, BlockDeserializationFailed, BlockCreationFailed, DecryptionFailed, KeyGenerationFailed, DecompressionFailed, ChunkRefCountUpdateFailed, ChunkMetadataSaveFailed, ChunkExistenceCheckFailed, BlockSaveFailed, ChunkDataNotFound};
 use crate::chunk::G_CHUNK_BLOCK_CACHE;
+use crate::memfs;
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -374,6 +375,127 @@ pub fn get_block_path(block_id: &str) -> PathBuf {
     Path::new("blocks").join(dir1).join(dir2).join(dir3).join(block_id)
 }
 
+// 用于memfs::Processor的处理函数
+fn process_block_data(data: &[u8], params: &std::collections::HashMap<String, String>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // 反序列化Block
+    let mut block = Block::deserialize(data)?;
+    
+    // 获取配置参数
+    let compress = params.get("compress").unwrap_or(&"false".to_string()).parse::<bool>().unwrap_or(false);
+    let encrypt = params.get("encrypt").unwrap_or(&"false".to_string()).parse::<bool>().unwrap_or(false);
+    let compress_level = params.get("compress_level").unwrap_or(&"3".to_string()).parse::<u8>().unwrap_or(3);
+    
+    // 调用pack_block进行处理
+    block = pack_block(block, compress, encrypt, compress_level)?;
+    
+    // 重新序列化
+    Ok(block.serialize()?)
+}
+
+/// 处理block数据的压缩和加密
+pub fn unpack_block(mut block: Block, block_id: &String) -> Result<Block> {
+    // 解密数据（如果需要）
+    if block.header.encrypted {
+        info!("unpack_block - decrypting block {}", block.header.id);
+        match crate::utils::gen_key(&block.header.id, 16) {
+            Ok(key_vec) => {
+                match decrypt_data(&block.data, &key_vec) {
+                    Ok(decrypted) => {
+                        block.data = decrypted;
+                        info!("unpack_block - block {} decryption successful", block.header.id);
+                    },
+                    Err(e) => {
+                        error!("unpack_block - failed to decrypt block: {}, error: {:?}", block_id, e);
+                        return Err(DecryptionFailed { reason: e.to_string() }.into());
+                    }
+                }
+            },
+            Err(e) => {
+                error!("unpack_block - failed to generate decryption key for block: {}, error: {:?}", block_id, e);
+                return Err(KeyGenerationFailed { block_id: block_id.to_string(), error: e.to_string() }.into());
+            }
+        }
+    }
+    
+    // 解压数据（如果需要）
+    if block.header.compressed {
+        info!("unpack_block - decompressing block {}", block.header.id);
+        match decompress_data(&block.data) {
+            Ok(decompressed) => {
+                block.data = decompressed;
+                info!("unpack_block - block {} decompression len {} successful", block.header.id, block.data.len());
+            },
+            Err(e) => {
+                error!("unpack_block - failed to decompress block: {}, error: {:?}", block_id, e);
+                return Err(DecompressionFailed { block_id: block_id.to_string(), error: e.to_string() }.into());
+            }
+        }
+    }
+    
+    Ok(block)
+}
+
+pub fn pack_block(mut block: Block, compress: bool, encrypt: bool, compress_level: u8) -> Result<Block> {
+    // 更新etag
+    let etag = blake3::hash(&block.data);
+    etag.as_bytes().iter().take(16).enumerate().for_each(|(i, &byte)| {
+        block.header.etag[i] = byte;
+    });
+
+    // 先压缩
+    if compress {
+        info!("pack_block - compressing block {} with zstd", block.header.id);
+        
+        match compress_data(&block.data, compress_level.into()) {
+            Ok(compressed_result) => match compressed_result {
+                Some(compressed_data) => {
+                    block.data = compressed_data;
+                    block.header.compressed = true;
+                    block.header.real_size = block.data.len() as i64;
+                    info!("pack_block - block {} compression successful, original size: {} bytes, compressed: {} bytes", 
+                          block.header.id, block.header.total_size, block.data.len());
+                },
+                None => {
+                    // 如果压缩失败，保持原始数据不变
+                    block.header.compressed = false;
+                    error!("pack_block - compression didn't reduce size for block {}, keeping original", block.header.id);
+                }
+            },
+            Err(e) => {
+                block.header.compressed = false;
+                error!("pack_block - failed to compress block {}: {:?}", block.header.id, e);
+            }
+        }
+    }    
+
+    // 后加密
+    if encrypt {
+        info!("pack_block - encrypting block {} with aes-gcm", block.header.id);
+        
+        // 先尝试生成密钥并加密
+        match crate::utils::gen_key(&block.header.id, 16) {
+            Ok(key_vec) => match encrypt_data(&block.data, &key_vec) {
+                Ok(encrypted_data) => {
+                    block.data = encrypted_data;
+                    block.header.encrypted = true;
+                    block.header.real_size = block.data.len() as i64;
+                    info!("pack_block - block {} encryption successful", block.header.id);
+                },
+                Err(e) => {
+                    block.header.encrypted = false;
+                    error!("pack_block - encryption failed for block {}: {:?}", block.header.id, e);
+                }
+            },
+            Err(e) => {
+                block.header.encrypted = false;
+                error!("pack_block - failed to generate encryption key for block {}: {:?}", block.header.id, e);               
+            }
+        }
+    }
+
+    Ok(block)
+}
+
 // #[instrument(level = "error", skip_all)]
 pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
     // 构建缓存键
@@ -406,18 +528,18 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
     }
     
     // 读取block文件内容
-    let block_data = match crate::memfs::read(&block_path) {
+    let block_data = match crate::memfs::read(&block_path, None) {
         Ok(data) => data,
         Err(e) => {
             error!("read_block - failed to read block file: {}, path: {:?}, error: {:?}", block_id, block_path, e);
             return Err(BlockReadFailed { block_id: block_id.to_string(), error: e.to_string() }.into());
         }
     };
-
-    error!("read_block - block read: {}, path: {:?}, block size :{}", block_id, block_path, block_data.len());
+  
+    info!("read_block - block read: {}, path: {:?}, block size :{}", block_id, block_path, block_data.len());
     
     // 反序列化block数据
-    let mut block: Block = match Block::deserialize(&block_data) {
+    let block: Block = match Block::deserialize(&block_data) {
         Ok(block) => block,
         Err(e) => {
             error!("read_block - failed to deserialize block: {}, error: {:?}", block_id, e);
@@ -435,43 +557,11 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
         }.into());
     }
     
-    // 解密数据（如果需要）
-    if block.header.encrypted {
-        info!("read_block - decrypting block {}", block.header.id);
-        match crate::utils::gen_key(&block.header.id, 16) {
-            Ok(key_vec) => {
-                match decrypt_data(&block.data, &key_vec) {
-                    Ok(decrypted) => {
-                        block.data = decrypted;
-                        info!("read_block - block {} decryption successful", block.header.id);
-                    },
-                    Err(e) => {
-                        error!("read_block - failed to decrypt block: {}, error: {:?}", block_id, e);
-                        return Err(DecryptionFailed { reason: e.to_string() }.into());
-                    }
-                }
-            },
-            Err(e) => {
-                error!("read_block - failed to generate decryption key for block: {}, error: {:?}", block_id, e);
-                return Err(KeyGenerationFailed { block_id: block_id.to_string(), error: e.to_string() }.into());
-            }
-        }
-    }
-    
-    // 解压数据（如果需要）
-    if block.header.compressed {
-        info!("read_block - decompressing block {}", block.header.id);
-        match decompress_data(&block.data) {
-            Ok(decompressed) => {
-                block.data = decompressed;
-                info!("read_block - block {} decompression len {} successful", block.header.id, block.data.len());
-            },
-            Err(e) => {
-                error!("read_block - failed to decompress block: {}, error: {:?}", block_id, e);
-                return Err(DecompressionFailed { block_id: block_id.to_string(), error: e.to_string() }.into());
-            }
-        }
-    }
+    // 调用unpack_block函数处理解密和解压
+    let block = match unpack_block(block, block_id) {
+        Ok(unpacked_block) => unpacked_block,
+        Err(e) => return Err(e)
+    };
 
     // 打印 block header
     debug!("read_block - block header: {:?}, data len {}", block.header, block.data.len());
@@ -510,14 +600,13 @@ pub fn read_block(block_id: &String, fs: &DedupFS) -> Result<Block> {
     Ok(block)
 }
 
-
 // #[instrument(level = "error", skip_all)]
 pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
     // 创建block的副本，避免修改原始数据
     let mut saved_block = block.clone();
 
     // 打印 block信息
-    error!("save_block - block id {}, data len {}", saved_block.header.id, saved_block.data.len());
+    info!("save_block - block id {}, data len {}", saved_block.header.id, saved_block.data.len());
 
     // 统一更新一下total_size
     saved_block.header.total_size = saved_block.header.chunk_list.iter().map(|chunk| chunk.size as i64).sum();
@@ -543,62 +632,25 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
     let boxed_block: Box<dyn CacheItem + Send + Sync> = Box::new(saved_block.clone());
     G_CHUNK_BLOCK_CACHE.put(cache_key, boxed_block, |b| b.size());
 
-    // 更新etag, 比较耗时，放到真正写磁盘时候进行
-    let etag = blake3::hash(&saved_block.data);
-    etag.as_bytes().iter().take(16).enumerate().for_each(|(i, &byte)| {
-        saved_block.header.etag[i] = byte;
-    });
-
-    // 先压缩, 比较耗时，放到真正写磁盘时候进行
-    if fs.block_conf.compress {
-        info!("save_block - compressing block {} with zstd", saved_block.header.id);
+    // 因为压缩操作比较消耗时间，所以这里使用memfs::Processor 中延后处理
+    let delay = true;
+    let mut processor: Option<memfs::Processor> = None;
+    if !delay {
+        // 调用pack_block函数处理数据压缩和加密
+        saved_block = pack_block(saved_block, fs.block_conf.compress, fs.block_conf.encrypt, fs.block_conf.compress_level)?;
+    } else {
+        // 构造一个 memfs::Processor func 调用 pack_block
+        let mut params = std::collections::HashMap::new();
+        params.insert("compress".to_string(), fs.block_conf.compress.to_string());
+        params.insert("encrypt".to_string(), fs.block_conf.encrypt.to_string());
+        params.insert("compress_level".to_string(), fs.block_conf.compress_level.to_string());
         
-        // 使用utils中的压缩函数，压缩级别设置为3
-        match compress_data(&saved_block.data, fs.block_conf.compress_level.into()) {
-            Ok(compressed_result) => match compressed_result {
-                Some(compressed_data) => {
-                    saved_block.data = compressed_data;
-                    saved_block.header.compressed = true;
-                    saved_block.header.real_size = saved_block.data.len() as i64;
-                    info!("save_block - block {} compression successful, original size: {} bytes, compressed: {} bytes", 
-                          saved_block.header.id, saved_block.header.total_size, saved_block.data.len());
-                },
-                None => {
-                    // 如果压缩失败，保持原始数据不变
-                    saved_block.header.compressed = false;
-                    error!("save_block - compression didn't reduce size for block {}, keeping original", saved_block.header.id);
-                }
-            },
-            Err(e) => {
-                saved_block.header.compressed = false;
-                error!("save_block - failed to compress block {}: {:?}", saved_block.header.id, e);
-            }
-        }
-    }    
-
-    // 后加密, 比较耗时，放到真正写磁盘时候进行
-    if fs.block_conf.encrypt {
-        info!("save_block - encrypting block {} with aes-gcm", saved_block.header.id);
+        // 使用已经在外部定义的process_block_data函数
         
-        // 先尝试生成密钥并加密
-        match crate::utils::gen_key(&saved_block.header.id, 16) {
-            Ok(key_vec) => match encrypt_data(&saved_block.data, &key_vec) {
-                Ok(encrypted_data) => {
-                    saved_block.data = encrypted_data;
-                    saved_block.header.encrypted = true;
-                    saved_block.header.real_size = saved_block.data.len() as i64;
-                    info!("save_block - block {} encryption successful", saved_block.header.id);
-                },
-                Err(e) => {
-                    saved_block.header.encrypted = false;
-                    error!("save_block - encryption failed for block {}: {:?}", saved_block.header.id, e);
-                }
-            },
-            Err(e) => {
-                saved_block.header.encrypted = false;
-                error!("save_block - failed to generate encryption key for block {}: {:?}", saved_block.header.id, e);               
-            }
-        }
+        processor = Some(crate::memfs::Processor {
+            func: process_block_data,
+            params: params,
+        });
     }
 
     // 保存block到磁盘
@@ -630,7 +682,7 @@ pub fn save_block(block: &Block, fs: &DedupFS) -> Result<Block> {
         }
     };
 
-    match crate::memfs::write(&block_path, block_data) {
+    match crate::memfs::write(&block_path, block_data, processor) {
         Ok(_) => {},
         Err(e) => {
             error!("save_block - failed to write block {} to {:?}: {:?}", saved_block.header.id, block_path, e);
