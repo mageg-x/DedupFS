@@ -19,13 +19,14 @@ mod cmd;
 mod errors;
 mod logging;
 mod kvstore;
+mod keylock;
 
 use anyhow::Result;
 use clap::{ Parser, Subcommand };
 use std::path::{ PathBuf };
 use daemon::{ Client, Command as DaemonCommand, Response as DaemonResponse };
 use ctrlc;
-use pprof::ProfilerGuard;
+// use pprof::ProfilerGuard;
 
 // 全局信号处理已移至cmd模块中实现
 

@@ -59,7 +59,7 @@ impl DedupFS {
         };
         
         let block_conf = BlockConfig {
-            size: 64 * 1024 * 1024, // 64MB
+            size: 2 * 1024 * 1024, // 64MB
             compress: false,
             encrypt: false,
             compress_level: 3,

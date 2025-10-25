@@ -88,7 +88,7 @@ impl Config {
     pub fn default() -> Self {
         Self {
             block: BlockConfig {
-                size: 67108864,
+                size: 64*1024*1024,
                 compress: true,
                 encrypt: false,
                 compress_level: 6,

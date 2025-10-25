@@ -132,12 +132,13 @@ impl<K: std::cmp::Eq + std::hash::Hash + Clone, V> Cache<K, V> {
                     self.current_size.fetch_sub(size, Ordering::SeqCst);
                     size_freed += size;
                     items_removed += 1;
+                    // error!("Cache item removed: key={:?}, size={}", key, size);
                 }
                 i += 1;
             }
             
             if items_removed > 0 {
-                info!("Cache cleanup completed: removed {} items, freed {} bytes", items_removed, size_freed);
+                error!("Cache cleanup completed: removed {} items, freed {} bytes", items_removed, size_freed);
             }
         }
     }

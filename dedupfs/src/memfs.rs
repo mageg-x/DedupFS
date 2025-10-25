@@ -224,7 +224,7 @@ impl MemFs {
         
         loop {
             // 等待命令或超时
-            let command = match receiver.recv_timeout(Duration::from_secs(5)) {
+            let command = match receiver.recv_timeout(Duration::from_secs(1)) {
                 Ok(cmd) => cmd,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // 超时，刷新所有缓存
