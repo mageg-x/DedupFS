@@ -194,10 +194,22 @@ func (m *MemFs) Remove(path string) error {
 		if err := os.Remove(absPath); err != nil {
 			return err
 		}
-		// 尝试删除空父目录（可选）
-		dir := filepath.Dir(absPath)
-		if dir != "." && dir != "/" {
-			_ = os.Remove(dir) // 忽略错误（非空则失败）
+
+		dir := filepath.Dir(path)
+		for i := 0; i < 3; i++ {
+			// 安全边界：避免删除 . / 根目录 / 当前工作目录等
+			if dir == "/" || dir == "." || dir == "" {
+				break
+			}
+
+			// 尝试删除（os.Remove 只能删空目录）
+			if err := os.Remove(dir); err != nil {
+				// 目录非空、不存在、权限不足等 → 停止向上删
+				break
+			}
+
+			// 成功删除，继续向上
+			dir = filepath.Dir(dir)
 		}
 	}
 	return nil

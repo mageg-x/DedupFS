@@ -12,6 +12,28 @@ import (
 	"github.com/mageg-x/dedupfs/internal/log"
 )
 
+// ChunkConfig represents chunk configuration options
+type ChunkConfig struct {
+	FixedSize bool
+	MinSize   int64
+	AvgSize   int64
+	MaxSize   int64
+}
+
+// BlockConfig represents block configuration options
+type BlockConfig struct {
+	Size     int64
+	Compress bool
+	Encrypt  bool
+	Password string
+}
+
+// MountOptions contains all mount options
+type MountOptions struct {
+	ChunkConf *ChunkConfig
+	BlockConf *BlockConfig
+}
+
 var (
 	// 获取logger实例用于输出日志
 	logger = log.GetLogger("dedupfs")
@@ -22,8 +44,8 @@ var (
 )
 
 // Mount mounts the deduplicated file system at the specified mount point
-func Mount(mountPoint, sourceDir string) error {
-	logger.Infof("starting mount process: %s -> %s", sourceDir, mountPoint)
+func Mount(mountPoint, sourceDir string, options *MountOptions) error {
+	logger.Infof("starting mount process: %s -> %s, opt %#v, %#v", sourceDir, mountPoint, options.BlockConf, options.ChunkConf)
 
 	var err error
 	mountPoint, err = filepath.Abs(mountPoint)
@@ -45,7 +67,38 @@ func Mount(mountPoint, sourceDir string) error {
 
 	logger.Infof("mountPoint is: %s , sourceDir is: %s", mountPoint, sourceDir)
 
-	fsys, err := dfs.NewDedupFS(mountPoint, sourceDir)
+	// 设置默认配置
+	chunkConf := &dfs.ChunkConfig{
+		FixedSize: false,
+		MinSize:   4096,
+		AvgSize:   8 * 1024,
+		MaxSize:   16 * 1024,
+	}
+
+	blockConf := &dfs.BlockConfig{
+		Size:     1024 * 1024 * 64,
+		Compress: true,
+		Encrypt:  false,
+	}
+
+	// 如果提供了选项，则覆盖默认配置
+	if options != nil {
+		if options.ChunkConf != nil {
+			chunkConf.FixedSize = options.ChunkConf.FixedSize
+			chunkConf.MinSize = options.ChunkConf.MinSize
+			chunkConf.AvgSize = options.ChunkConf.AvgSize
+			chunkConf.MaxSize = options.ChunkConf.MaxSize
+		}
+
+		if options.BlockConf != nil {
+			blockConf.Size = options.BlockConf.Size
+			blockConf.Compress = options.BlockConf.Compress
+			blockConf.Encrypt = options.BlockConf.Encrypt
+			blockConf.Password = options.BlockConf.Password
+		}
+	}
+
+	fsys, err := dfs.NewDedupFS(mountPoint, sourceDir, chunkConf, blockConf)
 	if err != nil {
 		logger.Errorf("failed to create dedupfs instance: %v", err)
 		return fmt.Errorf("failed to create dedupfs instance: %w", err)

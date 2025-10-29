@@ -197,6 +197,7 @@ func PutChunks(chunks []*Chunk, fs *DedupFS) error {
 			chunk.RefCount = 1
 		} else {
 			chunk.RefCount = c.RefCount + 1
+			chunk.BlockID = c.BlockID
 			exist = true
 			logger.Debugf("chunk %s:%d:%d found in kvstore", chunk.Hash, chunk.RefCount, chunk.Size)
 		}
@@ -208,6 +209,8 @@ func PutChunks(chunks []*Chunk, fs *DedupFS) error {
 				return fmt.Errorf("failed to add chunk %s to block: %w", chunk.Hash, err)
 			}
 		}
+
+		logger.Debugf("chunk %s:%d:%d block %s saved to kvstore", chunk.Hash, chunk.RefCount, chunk.Size, chunk.BlockID)
 
 		if err := fs.KVStore.Set(chunkKey, chunk); err != nil {
 			logger.Errorf("failed to save chunk %s metadata: %v", chunk.Hash, err)
@@ -238,7 +241,7 @@ func DoChunking(data []byte, fs *DedupFS) ([]*Chunk, error) {
 			chunks = append(chunks, chunk)
 		}
 	} else {
-		logger.Debugf("using cdc chunking: min=%d, avg=%d, max=%d", cfg.MinSize, cfg.AvgSize, cfg.MaxSize)
+		logger.Infof("using cdc chunking: min=%d, avg=%d, max=%d", cfg.MinSize, cfg.AvgSize, cfg.MaxSize)
 		chunker, err := fastcdc.NewChunker("fastcdc", bytes.NewReader(data), &fastcdc.ChunkerOpts{
 			MinSize:    int(cfg.MinSize),
 			NormalSize: int(cfg.AvgSize),

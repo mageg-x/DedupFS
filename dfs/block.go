@@ -484,7 +484,7 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 }
 
 func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
-	logger.Errorf("removing chunk %s from block %s in filesystem %s", chunk.Hash, chunk.BlockID, fs.ID)
+	logger.Debugf("removing chunk %s from block %s in filesystem %s", chunk.Hash, chunk.BlockID, fs.ID)
 
 	// current block 清理
 	key := fmt.Sprintf("block:%s", fs.ID)
@@ -494,6 +494,10 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 				logger.Errorf("failed to remove chunk from current block: %v", err)
 				return fmt.Errorf("remove chunk from current block failed %w", err)
 			} else {
+				if len(curBlock.Header.ChunkList) == 0 {
+					logger.Errorf("current block %s is empty, removing it", curBlock.Header.ID)
+					CURRENT_BLOCK.Store(key, nil)
+				}
 				CURRENT_BLOCK.Store(key, curBlock)
 			}
 		} else {
@@ -515,7 +519,7 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 		if len(block.Header.ChunkList) == 0 {
 			// 删除 block 文件
 			blockPath := filepath.Join(fs.DataDir, getBlockPath(chunk.BlockID))
-			logger.Errorf("removing block %s from memfs", blockPath)
+			logger.Debugf("removing block %s from memfs", blockPath)
 			mfs := memfs.GetInstance()
 			if mfs == nil {
 				logger.Errorf("memfs not initialized")

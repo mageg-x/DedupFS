@@ -50,6 +50,7 @@ type INode struct {
 	Parent        uint64            `msgpack:"parent" json:"parent"`
 	Xattr         map[string][]byte `msgpack:"xattr" json:"xattr"`
 	Chunks        []*INodeChunk     `msgpack:"chunks,omitempty" json:"chunks,omitempty"`
+	DropChunks    []*INodeChunk     `msgpack:"drop_chunks,omitempty" json:"drop_chunks,omitempty"`
 	SymlinkTarget *string           `msgpack:"symlink_target,omitempty" json:"symlink_target,omitempty"`
 }
 
@@ -201,6 +202,7 @@ func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
 						logger.Errorf("failed to get chunk data for hash %s: %v", lastChunk.Hash, err)
 						return fmt.Errorf("failed to get chunk data")
 					} else {
+						n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: lastChunk.Hash})
 						lastChunk.Hash = ""
 						lastChunk.Data = chunkData.Data
 					}
@@ -306,6 +308,7 @@ func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
 					mergedData = append(mergedData, chunkData.Data...)
 				}
 			}
+			n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: chunk.Hash})
 		}
 
 		// 计算写入位置
@@ -408,6 +411,7 @@ func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
 					mergedData = append(mergedData, chunkData.Data...)
 				}
 			}
+			n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: chunk.Hash})
 		}
 
 		// 执行覆盖写入
@@ -613,22 +617,23 @@ func CreateINode(ino, pino uint64, kind FileType, name string, mode uint16) *INo
 		ino, pino, kind, name, mode)
 	now := time.Now().UTC()
 	inode := &INode{
-		Ino:    ino,
-		Size:   0,
-		Blocks: 0,
-		Atime:  now,
-		Mtime:  now,
-		Ctime:  now,
-		Crtime: now,
-		Kind:   kind,
-		Perm:   uint16(mode & 0777),
-		Nlink:  1,
-		Uid:    uint32(os.Getuid()),
-		Gid:    uint32(os.Getgid()),
-		Name:   name,
-		Parent: pino,
-		Xattr:  make(map[string][]byte),
-		Chunks: []*INodeChunk{},
+		Ino:        ino,
+		Size:       0,
+		Blocks:     0,
+		Atime:      now,
+		Mtime:      now,
+		Ctime:      now,
+		Crtime:     now,
+		Kind:       kind,
+		Perm:       uint16(mode & 0777),
+		Nlink:      1,
+		Uid:        uint32(os.Getuid()),
+		Gid:        uint32(os.Getgid()),
+		Name:       name,
+		Parent:     pino,
+		Xattr:      make(map[string][]byte),
+		Chunks:     []*INodeChunk{},
+		DropChunks: []*INodeChunk{},
 	}
 	logger.Debugf("inode %d created successfully", inode.Ino)
 	return inode
@@ -680,9 +685,7 @@ func SaveINode(fs *DedupFS, inode *INode) error {
 						savaChunks = append(savaChunks, chunks...)
 					}
 				} else {
-					if chunk.Hash == "" {
-						chunk.Hash = calcHash(chunk.Data)
-					}
+					chunk.Hash = calcHash(chunk.Data)
 					newChunks = append(newChunks, &INodeChunk{
 						Hash: chunk.Hash,
 					})
@@ -702,6 +705,7 @@ func SaveINode(fs *DedupFS, inode *INode) error {
 		}
 
 		inode.Chunks = newChunks
+		logger.Debugf("inode %d chunks %d:%d", inode.Ino, len(inode.Chunks), len(savaChunks))
 		if len(savaChunks) > 0 {
 			logger.Debugf("saving %d chunks to filesystem %s", len(savaChunks), fs.ID)
 			if err := PutChunks(savaChunks, fs); err != nil {
@@ -719,27 +723,53 @@ func SaveINode(fs *DedupFS, inode *INode) error {
 			return err
 		}
 	} else {
-		// Build a set of chunk hashes in the new inode
-		newHashSet := make(map[string]bool, len(inode.Chunks))
+		logger.Debugf("inode %d chunks %d:%d", inode.Ino, len(old_inode.Chunks), len(inode.Chunks))
+
+		// 统计新分片中每个哈希的出现次数
+		newHashCount := make(map[string]int, len(inode.Chunks))
 		for _, c := range inode.Chunks {
 			if c.Hash != "" {
-				newHashSet[c.Hash] = true
+				newHashCount[c.Hash]++
+			} else {
+				logger.Errorf("chunk data is empty of node %s  %d", inode.Name, inode.Ino)
+			}
+		}
+		// 废弃的chunks
+		for _, dropChunk := range inode.DropChunks {
+			if dropChunk.Hash != "" && newHashCount[dropChunk.Hash] > 0 {
+				newHashCount[dropChunk.Hash]--
+			} else {
+				logger.Errorf("chunk %#v is empty of node %s  %d", dropChunk, inode.Name, inode.Ino)
 			}
 		}
 
-		// Find chunks in old_inode that are NOT in newHashSet
+		// 统计旧分片中每个哈希的出现次数
+		oldHashCount := make(map[string]int, len(old_inode.Chunks))
 		for _, oldChunk := range old_inode.Chunks {
-			if oldChunk.Hash == "" {
-				continue
+			if oldChunk.Hash != "" {
+				oldHashCount[oldChunk.Hash]++
+			} else {
+				logger.Errorf("chunk data is empty of node %s  %d", inode.Name, inode.Ino)
 			}
-			if !newHashSet[oldChunk.Hash] {
-				logger.Debugf("removing chunk %s from filesystem %s", oldChunk.Hash, fs.ID)
-				if err := RemoveChunk(oldChunk.Hash, fs); err != nil {
-					logger.Errorf("failed to remove chunk %s: %v", oldChunk.Hash, err)
-					return fmt.Errorf("failed to remove chunk %s: %w", oldChunk.Hash, err)
+		}
+
+		// 找出需要删除的分块：旧计数 - 新计数 > 0 的部分
+		for hash, oldCount := range oldHashCount {
+			newCount := newHashCount[hash] // 如果不存在，newCount为0
+			deleteCount := oldCount - newCount
+
+			if deleteCount > 0 {
+				logger.Debugf("removing %d chunk %s from filesystem %s", deleteCount, hash, fs.ID)
+				for i := 0; i < deleteCount; i++ {
+					if err := RemoveChunk(hash, fs); err != nil {
+						logger.Errorf("failed to remove chunk %s: %v", hash, err)
+						return fmt.Errorf("failed to remove chunk %s: %w", hash, err)
+					}
 				}
 			}
 		}
+
+		inode.DropChunks = []*INodeChunk{}
 	}
 
 	if err := fs.KVStore.Set(key, inode); err != nil {
@@ -783,6 +813,22 @@ func GetINode(fs *DedupFS, ino uint64) (*INode, error) {
 
 func DelINode(fs *DedupFS, ino uint64) error {
 	logger.Debugf("deleting inode %d from filesystem %s", ino, fs.ID)
+
+	// 删除inode 的 chunks
+	if inode, err := GetINode(fs, ino); err != nil || inode == nil {
+		logger.Errorf("failed to get inode %d: %v", ino, err)
+		return fmt.Errorf("failed to get inode %d: %v", ino, err)
+	} else {
+		for _, chunk := range inode.Chunks {
+			if chunk.Hash != "" {
+				if err := RemoveChunk(chunk.Hash, fs); err != nil {
+					logger.Errorf("failed to remove chunk %s: %v", chunk.Hash, err)
+					return fmt.Errorf("failed to remove chunk %s: %w", chunk.Hash, err)
+				}
+			}
+		}
+	}
+
 	key := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
 	G_INODE_CACHE.Del(key)
 

@@ -125,14 +125,14 @@ type NodeHandle struct {
 }
 
 // 初始化DedupFS
-func NewDedupFS(mountPoint, baseDir string) (*DedupFS, error) {
+func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *BlockConfig) (*DedupFS, error) {
 	fs := &DedupFS{
 		ID:        fmt.Sprintf("%x", md5.Sum([]byte(mountPoint))),
 		BaseDir:   baseDir,
 		MetaDir:   filepath.Join(baseDir, "meta"),
 		DataDir:   filepath.Join(baseDir, "data"),
-		ChunkConf: &ChunkConfig{FixedSize: false, MinSize: 4096, AvgSize: 8 * 1024, MaxSize: 16 * 1024},
-		BlockConf: &BlockConfig{Size: 1024 * 1024 * 64, Compress: true, Encrypt: false},
+		ChunkConf: chunkConf,
+		BlockConf: blockConf,
 		mutex:     sync.RWMutex{},
 	}
 	fs.NextNodeID.Store(1)
