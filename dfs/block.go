@@ -297,8 +297,8 @@ func generateBlockID() string {
 	return timePart + randomPart
 }
 
-// getBlockPath 根据 blockID 生成存储路径
-func getBlockPath(blockID string) string {
+// GetBlockPath 根据 blockID 生成存储路径
+func GetBlockPath(blockID string) string {
 	n := len(blockID)
 	if n < 9 {
 		return filepath.Join("blocks", "default", blockID)
@@ -319,7 +319,7 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 		return block, nil
 	}
 
-	blockPath := filepath.Join(fs.DataDir, getBlockPath(blockID))
+	blockPath := filepath.Join(fs.DataDir, GetBlockPath(blockID))
 	logger.Debugf("block path: %s", blockPath)
 	mfs := memfs.GetInstance()
 	if mfs == nil {
@@ -413,7 +413,7 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 		return fmt.Errorf("serialize block failed %w", &err)
 	}
 
-	blockPath := filepath.Join(fs.DataDir, getBlockPath(block.Header.ID))
+	blockPath := filepath.Join(fs.DataDir, GetBlockPath(block.Header.ID))
 	logger.Debugf("block save path: %s", blockPath)
 	if err := os.MkdirAll(filepath.Dir(blockPath), 0755); err != nil {
 		logger.Errorf("failed to create directory: %v", err)
@@ -518,7 +518,7 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 	} else {
 		if len(block.Header.ChunkList) == 0 {
 			// 删除 block 文件
-			blockPath := filepath.Join(fs.DataDir, getBlockPath(chunk.BlockID))
+			blockPath := filepath.Join(fs.DataDir, GetBlockPath(chunk.BlockID))
 			logger.Debugf("removing block %s from memfs", blockPath)
 			mfs := memfs.GetInstance()
 			if mfs == nil {

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	mrand "math/rand"
-	"os"
 	"path"
 	"runtime"
 	"sync"
@@ -188,18 +187,4 @@ func Decrypt(data []byte, key string) ([]byte, error) {
 	}
 
 	return plaintext, nil
-}
-
-func IsDirEmpty(path string) (bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-
-	_, err = f.Readdirnames(1) // 尝试读取一个条目
-	if err == io.EOF {
-		return true, nil // 空
-	}
-	return false, nil // 非空（或错误，但通常视为非空）
 }

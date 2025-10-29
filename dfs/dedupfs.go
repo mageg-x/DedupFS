@@ -3,6 +3,7 @@ package dfs
 import (
 	"context"
 	"crypto/md5"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -160,12 +161,21 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		fs.RootNode = NewTree()
 		root = CreateINode(1, 1, FileTypeDir, "/", 0755)
 		fs.NextNodeID.Store(1) // 1已经用于根目录
-		if err := SaveINode(fs, root); err != nil {
-			logger.Errorf("failed to save root inode: %v", err)
-			return nil, err
-		}
 	}
 
+	// 初始化 一些属性
+	root.SetXattr("user.dedupfs.version", []byte("0.1.0"))
+	root.SetXattr("user.dedupfs.id", []byte(fs.ID))
+	root.SetXattr("user.dedupfs.datadir", []byte(fs.DataDir))
+	root.SetXattr("user.dedupfs.metadir", []byte(fs.MetaDir))
+	cc, _ := json.Marshal(chunkConf)
+	root.SetXattr("user.dedupfs.chunkconf", cc)
+	bc, _ := json.Marshal(blockConf)
+	root.SetXattr("user.dedupfs.blockconf", bc)
+	if err := SaveINode(fs, root); err != nil {
+		logger.Errorf("failed to save root inode: %v", err)
+		return nil, err
+	}
 	return fs, nil
 }
 
