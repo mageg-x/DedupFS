@@ -5,7 +5,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mageg-x/dedupfs/internal/cmd"
+	"github.com/mageg-x/dedupfs/cmd"
 	"github.com/mageg-x/dedupfs/internal/log"
 	"github.com/mageg-x/dedupfs/internal/mount"
 )

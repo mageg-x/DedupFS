@@ -5,39 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
-	"github.com/mageg-x/dedupfs/internal/log"
 )
-
-var (
-	// get logger instance for logging
-	logger   = log.GetLogger("dedupfs")
-	instance KVStore
-	mutex    sync.Mutex
-
-	// Common errors for kv store operations
-	ErrKeyNotFound      = errors.New("key not found")
-	ErrKeyAlreadyExists = errors.New("key already exists")
-)
-
-// KVStore is a generic type kv store interface
-type KVStore interface {
-	// Get retrieves value by key, deserializes result into value
-	Get(key string, value interface{}) error
-	// Set stores key-value pair, serializes value to json
-	Set(key string, value interface{}) error
-	// Del deletes specified key
-	Del(key string) error
-	// List lists all keys matching prefix
-	List(prefix string) ([]string, error)
-	// Scan scans the kv store for keys matching prefix, starting from startKey
-	Scan(prefix, startKey string, limit int) (keys []string, nextKey string, err error)
-	// Close closes the kv store
-	Close() error
-}
 
 // BKV is badgerdb based kvstore implementation
 type BKV struct {
@@ -47,7 +20,7 @@ type BKV struct {
 }
 
 // NewBKV creates a new badgerdb store instance
-func GetKVStore(dbPath string) (KVStore, error) {
+func GetBKVStore(dbPath string, readOnly bool) (KVStore, error) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	if instance != nil {
@@ -86,6 +59,7 @@ func GetKVStore(dbPath string) (KVStore, error) {
 	opts.ZSTDCompressionLevel = 1
 	opts.VerifyValueChecksum = false // disable checksum for performance
 
+	opts.ReadOnly = readOnly
 	db, err := badger.Open(opts)
 	if err != nil {
 		logger.Errorf("failed to open badger db: %v", err)
@@ -288,6 +262,57 @@ func (s *BKV) Scan(prefix, startKey string, limit int) ([]string, string, error)
 
 	logger.Debugf("scan returned %d keys, nextKey: %s", len(keys), nextKey)
 	return keys, nextKey, nil
+}
+
+// CreateSnapshot creates a snapshot of the kv store in a separate goroutine
+func (s *BKV) CreateSnapshot(path string) error {
+	// 首先检查store是否关闭，但不持有锁
+	if err := s.checkClosed(); err != nil {
+		logger.Debug("create snapshot operation failed: store closed")
+		return err
+	}
+
+	logger.Infof("starting snapshot creation for badgerdb kv store to path: %s", path)
+
+	// 存储db引用，避免在goroutine中直接访问s.db（可能被修改）
+	var db *badger.DB
+	s.mutex.RLock()
+	db = s.db
+	s.mutex.RUnlock()
+
+	// Create a channel to receive the snapshot result
+	done := make(chan error, 1)
+
+	// Start a new goroutine to create the snapshot
+	go func(db *badger.DB) {
+		// Create directory if it doesn't exist
+		if err := os.MkdirAll(path, 0755); err != nil {
+			logger.Errorf("failed to create snapshot directory: %v", err)
+			done <- fmt.Errorf("failed to create snapshot directory: %w", err)
+			return
+		}
+
+		file, err := os.Create(path + "/snapshot.db")
+		if err != nil {
+			logger.Errorf("failed to create snapshot file: %v", err)
+			done <- fmt.Errorf("failed to create snapshot file: %w", err)
+			return
+		}
+		defer file.Close()
+
+		_, err = db.Backup(file, 0)
+		if err != nil {
+			logger.Errorf("failed to create badgerdb snapshot: %v", err)
+			done <- fmt.Errorf("failed to create badgerdb snapshot: %w", err)
+			return
+		}
+
+		logger.Infof("snapshot created successfully at: %s", path)
+		done <- nil
+	}(db)
+
+	// Wait for the snapshot operation to complete
+	return <-done
 }
 
 // Close closes the kv store

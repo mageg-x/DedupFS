@@ -3,6 +3,7 @@ package dfs
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -24,6 +25,32 @@ type Chunk struct {
 	RefCount int32  `json:"ref_count"`
 	BlockID  string `json:"block_id"`
 	Data     []byte `json:"-"` // 仅内存使用，不持久化
+}
+
+// MarshalJSONWithData 返回包含 Data 字段的 JSON
+func (c *Chunk) MarshalJSONWithData() ([]byte, error) {
+	type Alias Chunk
+	return json.Marshal(&struct {
+		Data []byte `json:"data"`
+		*Alias
+	}{
+		Data:  c.Data,
+		Alias: (*Alias)(c),
+	})
+}
+func (c *Chunk) UnmarshalJSONWithData(data []byte) error {
+	type Alias Chunk
+	aux := &struct {
+		Data []byte `json:"data"`
+		*Alias
+	}{
+		Alias: (*Alias)(c),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	c.Data = aux.Data
+	return nil
 }
 
 // 实现 CacheItem

@@ -563,6 +563,7 @@ func (n *INode) GetXattr(name string) ([]byte, error) {
 		logger.Errorf("no extended attributes for inode %d", n.Ino)
 		return nil, fmt.Errorf("no extended attributes")
 	}
+
 	// 获取扩展属性值
 	value, exists := n.Xattr[name]
 	if !exists {

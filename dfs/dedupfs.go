@@ -8,6 +8,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -147,7 +149,7 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	fs.KVStore, err = kvstore.GetKVStore(path.Join(fs.MetaDir, "dedupfs.db"))
+	fs.KVStore, err = kvstore.GetKVStore(path.Join(fs.MetaDir, "dedupfs.db"), false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kv store: %w", err)
 	}
@@ -641,6 +643,58 @@ func (fn BaseNode) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp
 	logger.Debugf("getxattr called for ino: %d, name: %s", fn.ino, req.Name)
 	fn.fs.mutex.RLock()
 	defer fn.fs.mutex.RUnlock()
+
+	// 一些扩展特殊的属性, user.dedupfs.inode.xx 提前 xx 为 ino
+	if strings.HasPrefix(req.Name, "user.dedupfs.inode.") {
+		// 提取ino
+		ino, err := strconv.ParseUint(req.Name[len("user.dedupfs.inode."):], 10, 64)
+		if err != nil {
+			logger.Errorf("failed to parse ino from xattr name: %v", err)
+			return fmt.Errorf("failed to parse ino from xattr name")
+		}
+		if inode, err := GetINode(fn.fs, ino); err != nil || inode == nil {
+			logger.Errorf("getxattr: failed to get inode: %v", err)
+			return syscall.ENOENT
+		} else {
+			value, err := json.Marshal(inode)
+			if err != nil {
+				logger.Errorf("failed to marshal inode: %v", err)
+				return syscall.EIO
+			}
+			resp.Xattr = value
+			return nil
+		}
+	} else if strings.HasPrefix(req.Name, "user.dedupfs.chunk.data.") {
+		// 提取chunk hash
+		chunkHash := req.Name[len("user.dedupfs.chunk.data."):]
+		chunk, err := GetChunkData(chunkHash, fn.fs)
+		if err != nil || chunk == nil || chunk.Data == nil {
+			logger.Errorf("getxattr: failed to get chunk data: %v", err)
+			return syscall.ENOENT
+		}
+		value := chunk.Data
+		// 长度不能超过 64K
+		if len(value) > 65536 {
+			value = value[:65536]
+		}
+		resp.Xattr = value
+		return nil
+	} else if strings.HasPrefix(req.Name, "user.dedupfs.chunk.meta.") {
+		// 提取chunk hash
+		chunkHash := req.Name[len("user.dedupfs.chunk.meta."):]
+		chunk, err := GetChunkMeta(chunkHash, fn.fs)
+		if err != nil || chunk == nil {
+			logger.Errorf("getxattr: failed to get chunk meta: %v", err)
+			return syscall.ENOENT
+		}
+		value, err := json.Marshal(chunk)
+		if err != nil {
+			logger.Errorf("failed to marshal chunk: %v", err)
+			return syscall.EIO
+		}
+		resp.Xattr = value
+		return nil
+	}
 
 	inode, err := GetINode(fn.fs, fn.ino)
 	if err != nil || inode == nil {
