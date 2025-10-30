@@ -5,7 +5,7 @@
 # DedupFS - Deduplication File System
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
+![Go](https://img.shields.io/badge/go-1.20%2B-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)
 
 ## Project Introduction
@@ -24,12 +24,12 @@ DedupFS is an innovative deduplication and compression file system that transpar
 
 ### 🧠 Intelligent Content Chunking
 
-```rust
+```go
 // FastCDC-based variable-length chunking algorithm
-pub struct FastCDCChunker {
-    min_size: usize,    // 8KB minimum chunk
-    avg_size: usize,    // 32KB average chunk  
-    max_size: usize,    // 128KB maximum chunk
+type FastCDCChunker struct {
+    minSize int // 8KB minimum chunk
+    avgSize int // 32KB average chunk  
+    maxSize int // 128KB maximum chunk
 }
 ```
 
@@ -40,14 +40,17 @@ pub struct FastCDCChunker {
 
 ### 🔍 Double-Layer Deduplication Technology
 
-```rust
+```go
 // SHA-256 based global deduplication
-impl DedupEngine {
-    pub fn find_duplicates(&self, chunks: &[Chunk]) -> Vec<ChunkRef> {
-        // Intra-file duplicate chunk detection
-        // Global hash index lookup
-        // Cross-file, cross-directory duplicate data identification
-    }
+type DedupEngine struct {
+    // Implementation details
+}
+
+func (de *DedupEngine) FindDuplicates(chunks []*Chunk) []*ChunkRef {
+    // Intra-file duplicate chunk detection
+    // Global hash index lookup
+    // Cross-file, cross-directory duplicate data identification
+    return nil
 }
 ```
 
@@ -60,14 +63,17 @@ impl DedupEngine {
 
 ### 🗜️ Dual-Layer Compression Technology
 
-```rust
+```go
 // Similar block aggregation compression
-impl CompressionEngine {
-    pub fn compress_blocks(&self, similar_chunks: Vec<Chunk>) -> CompressedBlock {
-        // Single chunk compression processing
-        // Similar content aggregation followed by unified compression
-        // Utilize data locality to improve compression ratio
-    }
+type CompressionEngine struct {
+    // Implementation details
+}
+
+func (ce *CompressionEngine) CompressBlocks(similarChunks []*Chunk) *CompressedBlock {
+    // Single chunk compression processing
+    // Similar content aggregation followed by unified compression
+    // Utilize data locality to improve compression ratio
+    return nil
 }
 ```
 
@@ -80,12 +86,12 @@ impl CompressionEngine {
 
 ### ⚡ High-Performance Architecture
 
-```rust
+```go
 // Multi-level cache system
-pub struct CacheManager {
-    chunk_cache: LruCache<ChunkHash, Vec<u8>>,      // Hot data block cache
-    block_cache: LruCache<BlockId, Vec<u8>>,        // Decompressed block cache
-    metadata_cache: LruCache<u64, FileMetadata>,    // Metadata cache
+type CacheManager struct {
+    chunkCache    *LRUCache[ChunkHash, []byte]    // Hot data block cache
+    blockCache    *LRUCache[BlockId, []byte]      // Decompressed block cache
+    inodeCache *Cache[ino, INode] // Inode cache
 }
 ```
 
@@ -126,7 +132,7 @@ pub struct CacheManager {
 │  ┌───────────┐  ┌───────────┐          │
 │  │Metadata   │  │ Block     │          │
 │  │Storage    │  │ Storage   │          │
-│  │(RocksDB)  │  │(File Sys) │          │
+│  │(pebbledb) │  │(File Sys) │          │
 │  └───────────┘  └───────────┘          │
 └─────────────────────────────────────────┘
 ```
@@ -190,49 +196,75 @@ Data reassembly → [Transparent return]
 # Compile from source
 git clone https://github.com/your-username/dedupfs.git
 cd dedupfs
-cargo build --release
+go build -o dedupfs main.go
 
-# Linux FUSE dependencies
-sudo apt-get install fuse3 libfuse3-dev
-
-# Windows WinFsp installation
-# Download and install from https://winfsp.dev/
 ```
 
 ### Basic Usage
 
 ```bash
-# Mount the deduplication file system
-./dedupfs mount /mnt/dedupfs
+# Mount the deduplication file system (all parameters via command line)
+./dedupfs mount /mnt/dfs data/ --min-size=1048576 --avg-size=2097152 --max-size=4194304 --compress=true
 
 # Use the file system normally
-cp large_file.iso /mnt/dedupfs/
-ls -lh /mnt/dedupfs/
+cp large_file.iso /mnt/dfs/
+ls -lh /mnt/dfs/
 
 # Check deduplication effectiveness
 ./dedupfs stats
 
 # Unmount the file system
-./dedupfs unmount /mnt/dedupfs
+./dedupfs unmount /mnt/dfs
+
+# Debug commands
+# Debug block information
+./dedupfs debug /mnt/dfs block  blockID
+
+# Debug inode information
+./dedupfs debug /mnt/dfs inode  file.txt
 ```
 
 ### Advanced Configuration
 
-```toml
-# ~/.config/dedupfs/config.toml
+All configuration parameters are now provided through command line arguments. For a complete list of available options, run:
 
-[chunking]
-min_size = 8192      # Optimization for small files
-avg_size = 32768     # Balance between deduplication rate and performance
-max_size = 131072    # Optimization for large file processing
-
-[compression]
-algorithm = "zstd"   # Compression algorithm selection
-level = 3            # Compression level adjustment
-
-[cache]
-max_memory_mb = 1024 # Adjust based on system memory
+```bash
+./dedupfs --help
+./dedupfs mount --help
+./dedupfs debug --help
 ```
+
+Common parameters:
+- `--avg-size`:       Average chunk size in bytes (default 2097152)
+- `--max-size`:      Maximum chunk size in bytes (default 4194304)
+- `--min-size`:      Minimum chunk size in bytes (default 1048576)
+- `--block-size`:    Block size in bytes (default 67108864)
+- `--fixed-size`:    Use fixed size chunks (default false)
+- `--compress`:      Enable compression (default true)
+- `--encrypt`:       Enable encryption(default false)
+- ` --password`:    string   Password for encryption (default empty string)
+
+### Debug Tools
+
+DedupFS includes powerful debugging tools for inspecting internal structures:
+
+#### Block Debugging
+
+The `debug block` command allows you to examine block details, including chunks, compression status, and data layout.
+
+![Block Debug Interface](block.png)
+
+#### Inode Debugging
+
+The `debug inode` command provides detailed information about file inodes, their chunks, and metadata.
+
+![Inode Debug Interface](inode.png)
+
+Both debug interfaces feature:
+- Interactive chunk browsing
+- Hex view of chunk contents
+- Real-time reference counting
+- Comprehensive metadata display
 
 ## Performance
 
@@ -276,46 +308,25 @@ Unlike traditional fixed-size chunking deduplication, DedupFS employs content-de
 - **Windows WinFsp**: Native Windows integration experience
 - **Unified Data Format**: Cross-platform data sharing and migration
 
-## Comparison with Other Solutions
-
-| Feature | DedupFS | ZFS Deduplication | Traditional Compression |
-|---------|---------|-------------------|-------------------------|
-| Deduplication Granularity | Variable Block | Fixed Block | File Level |
-| Memory Overhead | Medium | High | Low |
-| Transparent Usage | ✅ | ✅ | ❌ |
-| Cross-File Deduplication | ✅ | ✅ | ❌ |
-| Similarity Compression | ✅ | ❌ | ❌ |
 
 ## Core API
 
-### File System Operations
+### Command Line Interface
 
-```rust
-// Create and mount file system
-let fs = DedupFS::new("/path/to/config.toml")?;
-fs.mount("/mnt/dedupfs", MountOptions::default())?;
+DedupFS provides a comprehensive command line interface for all operations. All parameters are specified through command line arguments, making it easy to integrate with scripts and automation workflows.
 
-// Get system statistics
-let stats = fs.get_stats()?;
-println!("Deduplication ratio: {:.1}:1", stats.dedup_ratio);
+For detailed command usage, please refer to the command help or the source code in the `cmd` directory:
+
+```bash
+./dedupfs help
 ```
 
-### Advanced Configuration
-
-```rust
-// Custom chunking strategy
-let config = Config {
-    chunking: ChunkConfig {
-        min_size: 4 * 1024,     // 4KB
-        avg_size: 16 * 1024,    // 16KB  
-        max_size: 64 * 1024,    // 64KB
-    },
-    compression: CompressionConfig {
-        algorithm: CompressionAlgo::Zstd,
-        level: 6,
-    },
-    ..Default::default()
-};
+Key commands include:
+```bash
+- `mount`: Mount the deduplication file system
+- `unmount`: Unmount the file system
+- `stats`: Display deduplication statistics
+- `debug`: Advanced debugging tools (block, inode)
 ```
 
 ## Frequently Asked Questions
@@ -349,11 +360,14 @@ Not suitable for:
 
 ## Get Started
 
-DedupFS makes storage efficiency improvement simple and straightforward. Just mount the file system and enjoy the storage space savings from intelligent deduplication and compression.
+DedupFS makes storage efficiency improvement simple and straightforward. Just mount the file system with your preferred command line parameters and enjoy the storage space savings from intelligent deduplication and compression.
 
 ```bash
 # Start experiencing now
-./dedupfs mount /path/to/mountpoint
+./dedupfs mount /path/to/mountpoint  /path/to/data
+# Use debug tools to inspect internal structures
+./dedupfs debug  /path/to/mountpoint block blockID
+./dedupfs debug  /path/to/mountpoint inode file.txt
 # Start enjoying intelligent storage optimization!
 ```
 

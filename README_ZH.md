@@ -5,7 +5,7 @@
 # DedupFS - 去重文件系统
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)
+![Go](https://img.shields.io/badge/go-1.20%2B-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)
 
 ## 项目简介
@@ -24,12 +24,12 @@ DedupFS 是一个创新的去重压缩文件系统，通过在用户空间透明
 
 ### 🧠 智能内容分块
 
-```rust
+```go
 // 基于 FastCDC 的变长分块算法
-pub struct FastCDCChunker {
-    min_size: usize,    // 8KB 最小块
-    avg_size: usize,    // 32KB 平均块  
-    max_size: usize,    // 128KB 最大块
+type FastCDCChunker struct {
+    minSize int // 8KB 最小块
+    avgSize int // 32KB 平均块  
+    maxSize int // 128KB 最大块
 }
 ```
 
@@ -40,14 +40,17 @@ pub struct FastCDCChunker {
 
 ### 🔍 双重去重技术
 
-```rust
+```go
 // 基于 SHA-256 的全局去重
-impl DedupEngine {
-    pub fn find_duplicates(&self, chunks: &[Chunk]) -> Vec<ChunkRef> {
-        // 文件内重复chunk检测
-        // 全局哈希索引查找
-        // 跨文件、跨目录的重复数据识别
-    }
+type DedupEngine struct {
+    // 实现细节
+}
+
+func (de *DedupEngine) FindDuplicates(chunks []*Chunk) []*ChunkRef {
+    // 文件内重复chunk检测
+    // 全局哈希索引查找
+    // 跨文件、跨目录的重复数据识别
+    return nil
 }
 ```
 
@@ -60,14 +63,17 @@ impl DedupEngine {
 
 ### 🗜️ 双重压缩技术
 
-```rust
+```go
 // 相似块聚合压缩
-impl CompressionEngine {
-    pub fn compress_blocks(&self, similar_chunks: Vec<Chunk>) -> CompressedBlock {
-        // 单chunk压缩处理
-        // 相似内容聚合后统一压缩
-        // 利用数据局部性提升压缩率
-    }
+type CompressionEngine struct {
+    // 实现细节
+}
+
+func (ce *CompressionEngine) CompressBlocks(similarChunks []*Chunk) *CompressedBlock {
+    // 单chunk压缩处理
+    // 相似内容聚合后统一压缩
+    // 利用数据局部性提升压缩率
+    return nil
 }
 ```
 
@@ -80,12 +86,12 @@ impl CompressionEngine {
 
 ### ⚡ 高性能架构
 
-```rust
+```go
 // 多级缓存系统
-pub struct CacheManager {
-    chunk_cache: LruCache<ChunkHash, Vec<u8>>,      // 热点数据块缓存
-    block_cache: LruCache<BlockId, Vec<u8>>,        // 解压块缓存
-    metadata_cache: LruCache<u64, FileMetadata>,    // 元数据缓存
+type CacheManager struct {
+    chunkCache    *LRUCache[ChunkHash, []byte]    // 热点数据块缓存
+    blockCache    *LRUCache[BlockId, []byte]      // 解压块缓存
+    inodeCache *Cache[ino, INode] // Inode缓存
 }
 ```
 
@@ -123,7 +129,7 @@ pub struct CacheManager {
 │            存储抽象层                    │
 │  ┌───────────┐  ┌───────────┐          │
 │  │ 元数据存储 │  │  块存储    │          │
-│  │ (RocksDB) │  │ (文件系统) │          │
+│  │ (pebbledb) │  │ (文件系统) │          │
 │  └───────────┘  └───────────┘          │
 └─────────────────────────────────────────┘
 ```
@@ -187,49 +193,74 @@ Zstandard 解压 → [内存解压]
 # 从源码编译
 git clone https://github.com/your-username/dedupfs.git
 cd dedupfs
-cargo build --release
-
-# Linux 安装 FUSE 依赖
-sudo apt-get install fuse3 libfuse3-dev
-
-# Windows 安装 WinFsp
-# 从 https://winfsp.dev/ 下载安装
+go build -o dedupfs main.go
 ```
 
 ### 基础使用
 
 ```bash
-# 挂载去重文件系统
-./dedupfs mount /mnt/dedupfs
+# 挂载去重文件系统（所有参数通过命令行）
+./dedupfs mount /mnt/dfs data/ --min-size=1048576 --avg-size=2097152 --max-size=4194304 --compress=true
 
 # 正常使用文件系统
-cp large_file.iso /mnt/dedupfs/
-ls -lh /mnt/dedupfs/
+cp large_file.iso /mnt/dfs/
+ls -lh /mnt/dfs/
 
 # 查看去重效果
 ./dedupfs stats
 
 # 卸载文件系统
-./dedupfs unmount /mnt/dedupfs
+./dedupfs unmount /mnt/dfs
+
+# 调试命令
+# 调试块信息
+./dedupfs debug /mnt/dfs block  blockID
+
+# 调试inode信息
+./dedupfs debug /mnt/dfs inode  file.txt
 ```
 
 ### 高级配置
 
-```toml
-# ~/.config/dedupfs/config.toml
+所有配置参数现在都通过命令行参数提供。要查看完整的可用选项列表，请运行：
 
-[chunking]
-min_size = 8192      # 针对小文件优化
-avg_size = 32768     # 平衡去重率和性能
-max_size = 131072    # 大文件处理优化
-
-[compression]
-algorithm = "zstd"   # 压缩算法选择
-level = 3            # 压缩级别调整
-
-[cache]
-max_memory_mb = 1024 # 根据系统内存调整
+```bash
+./dedupfs --help
+./dedupfs mount --help
+./dedupfs debug --help
 ```
+
+常用参数：
+- `--avg-size`:       平均块大小（字节），默认 2097152
+- `--max-size`:      最大块大小（字节），默认 4194304
+- `--min-size`:      最小块大小（字节），默认 1048576
+- `--block-size`:    块大小（字节），默认 67108864
+- `--fixed-size`:    使用固定大小块（默认 false）
+- `--compress`:      启用压缩（默认 true）
+- `--encrypt`:       启用加密（默认 false）
+- ` --password`:    加密密码（默认空字符串）
+
+### 调试工具
+
+DedupFS 包含强大的调试工具，用于检查内部结构：
+
+#### 块调试
+
+`debug block` 命令允许您检查块的详细信息，包括块内的数据块、压缩状态和数据布局。
+
+![块调试界面](block.png)
+
+#### Inode 调试
+
+`debug inode` 命令提供有关文件 inode、它们的数据块和元数据的详细信息。
+
+![Inode 调试界面](inode.png)
+
+这两种调试界面都具有：
+- 交互式数据块浏览
+- 数据块内容的十六进制视图
+- 实时引用计数
+- 全面的元数据显示
 
 ## 性能表现
 
@@ -273,46 +304,26 @@ max_memory_mb = 1024 # 根据系统内存调整
 - **Windows WinFsp**：原生 Windows 集成体验
 - **统一数据格式**：跨平台数据共享和迁移
 
-## 与其他方案对比
 
-| 特性 | DedupFS | ZFS 去重 | 传统压缩 |
-|------|---------|----------|----------|
-| 去重粒度 | 变长块级 | 固定块级 | 文件级 |
-| 内存开销 | 中等 | 高 | 低 |
-| 透明使用 | ✅ | ✅ | ❌|
-| 跨文件去重 | ✅ | ✅ | ❌ |
-| 相似性压缩 | ✅ | ❌ | ❌ |
 
 ## 核心 API
 
-### 文件系统操作
+### 命令行接口
 
-```rust
-// 创建并挂载文件系统
-let fs = DedupFS::new("/path/to/config.toml")?;
-fs.mount("/mnt/dedupfs", MountOptions::default())?;
+DedupFS 提供全面的命令行接口，用于所有操作。所有参数都通过命令行参数指定，便于与脚本和自动化工作流程集成。
 
-// 获取系统统计信息
-let stats = fs.get_stats()?;
-println!("去重率: {:.1}:1", stats.dedup_ratio);
+有关详细的命令使用方法，请参阅命令帮助或 `cmd` 目录中的源代码：
+
+```bash
+./dedupfs help
 ```
 
-### 高级配置
-
-```rust
-// 自定义分块策略
-let config = Config {
-    chunking: ChunkConfig {
-        min_size: 4 * 1024,     // 4KB
-        avg_size: 16 * 1024,    // 16KB  
-        max_size: 64 * 1024,    // 64KB
-    },
-    compression: CompressionConfig {
-        algorithm: CompressionAlgo::Zstd,
-        level: 6,
-    },
-    ..Default::default()
-};
+关键命令包括：
+```bash
+- `mount`: 挂载去重文件系统
+- `unmount`: 卸载文件系统
+- `stats`: 显示去重统计信息
+- `debug`: 高级调试工具（block、inode）
 ```
 
 ## 常见问题
@@ -346,11 +357,14 @@ DedupFS 采用多层次的完整性保护：
 
 ## 开始使用
 
-DedupFS 让存储效率提升变得简单直接。只需挂载文件系统，即可享受智能去重和压缩带来的存储空间节省。
+DedupFS 让存储效率提升变得简单直接。只需使用您首选的命令行参数挂载文件系统，即可享受智能去重和压缩带来的存储空间节省。
 
 ```bash
 # 立即体验
-./dedupfs mount /path/to/mountpoint
+./dedupfs mount /path/to/mountpoint  /path/to/data
+# 使用调试工具检查内部结构
+./dedupfs debug  /path/to/mountpoint block blockID
+./dedupfs debug  /path/to/mountpoint inode file.txt
 # 开始享受智能存储优化！
 ```
 

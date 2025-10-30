@@ -33,9 +33,9 @@ var mountCmd = &cobra.Command{
 func initMount() {
 	// Mount command flags
 	mountCmd.Flags().BoolVar(&fixedSize, "fixed-size", false, "Use fixed size chunks")
-	mountCmd.Flags().Int64Var(&minSize, "min-size", 4096, "Minimum chunk size in bytes")
-	mountCmd.Flags().Int64Var(&avgSize, "avg-size", 8*1024, "Average chunk size in bytes")
-	mountCmd.Flags().Int64Var(&maxSize, "max-size", 16*1024, "Maximum chunk size in bytes")
+	mountCmd.Flags().Int64Var(&minSize, "min-size", 1024*1024, "Minimum chunk size in bytes")
+	mountCmd.Flags().Int64Var(&avgSize, "avg-size", 2*1024*1024, "Average chunk size in bytes")
+	mountCmd.Flags().Int64Var(&maxSize, "max-size", 4*1024*1024, "Maximum chunk size in bytes")
 	mountCmd.Flags().Int64Var(&blockSize, "block-size", 64*1024*1024, "Block size in bytes")
 	mountCmd.Flags().BoolVar(&compress, "compress", true, "Enable compression")
 	mountCmd.Flags().BoolVar(&encrypt, "encrypt", false, "Enable encryption")

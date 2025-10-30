@@ -221,7 +221,7 @@ func (m blockModel) View() string {
 	if availableHeight < 6 {
 		availableHeight = 6
 	}
-	innerHeight := availableHeight - 2
+	innerHeight := availableHeight - 4
 	if innerHeight < 3 {
 		innerHeight = 3
 	}
