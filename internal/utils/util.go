@@ -12,7 +12,6 @@ import (
 	mrand "math/rand"
 	"path"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -49,14 +48,23 @@ func RetryCall(maxRetries int, fn func() error) error {
 	return fmt.Errorf("retry failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// WithLock 是一个辅助函数，用于在特定代码块内自动锁定和解锁
-func WithLock(mu *sync.Mutex, fn func() error) error {
+// WithLock 是一个泛型辅助函数，用于在特定代码块内自动锁定和解锁
+// 支持任何实现了Lock()和Unlock()方法的锁类型，如sync.Mutex、sync.RWMutex等
+func WithLock[L interface {
+	Lock()
+	Unlock()
+}](mu L, fn func() error) error {
 	mu.Lock()
 	defer mu.Unlock()
 	return fn()
 }
 
-func WithTryLock(mu *sync.Mutex, fn func() error) error {
+// WithTryLock 是一个泛型辅助函数，用于尝试锁定并在特定代码块内执行操作
+// 支持任何实现了TryLock()和Unlock()方法的锁类型，如sync.Mutex等
+func WithTryLock[L interface {
+	TryLock() bool
+	Unlock()
+}](mu L, fn func() error) error {
 	if mu.TryLock() {
 		defer mu.Unlock()
 		return fn()

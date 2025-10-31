@@ -10,6 +10,7 @@ import (
 	"bazil.org/fuse/fs"
 	"github.com/mageg-x/dedupfs/dfs"
 	"github.com/mageg-x/dedupfs/internal/log"
+	"github.com/mageg-x/dedupfs/internal/utils"
 )
 
 // ChunkConfig represents chunk configuration options
@@ -38,9 +39,9 @@ var (
 	// 获取logger实例用于输出日志
 	logger = log.GetLogger("dedupfs")
 	// 存储已挂载的目录和对应的文件系统实例，用于程序异常退出时清理
-	mountMap = make(map[string]*dfs.DedupFS)
+	MountMap = make(map[string]*dfs.DedupFS)
 	// 用于保护mountMap的互斥锁
-	mountMutex sync.RWMutex
+	MountMutex sync.RWMutex
 )
 
 // Mount mounts the deduplicated file system at the specified mount point
@@ -53,6 +54,13 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 		logger.Errorf("failed to get absolute path for mount point: %v", err)
 		return fmt.Errorf("failed to get absolute path for mount point: %w", err)
 	}
+	MountMutex.RLock()
+	if _, ok := MountMap[mountPoint]; ok {
+		MountMutex.RUnlock()
+		logger.Errorf("mount point %s is already mounted", mountPoint)
+		return fmt.Errorf("mount point %s is already mounted", mountPoint)
+	}
+	MountMutex.RUnlock()
 
 	sourceDir, err = filepath.Abs(sourceDir)
 	if err != nil {
@@ -128,30 +136,21 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 	logger.Info("successfully mounted file system")
 
 	// 添加到已挂载目录列表并存储文件系统实例
-	mountMutex.Lock()
-	mountMap[mountPoint] = fsys
-	mountMutex.Unlock()
+	utils.WithLock(&MountMutex, func() error {
+		MountMap[mountPoint] = fsys
+		return nil
+	})
+
 	logger.Debugf("added %s to mounted directories list", mountPoint)
-	defer c.Close()
 
-	// 创建一个通道来接收服务错误
-	serveErrCh := make(chan error)
-
-	// 在单独的goroutine中提供文件系统服务
-	go func() {
-		logger.Info("starting to serve file system")
-		if err := fs.Serve(c, fsys); err != nil {
-			logger.Errorf("failed to serve file system: %v", err)
-			serveErrCh <- err
-			return
-		}
-		// 服务正常结束
-		close(serveErrCh)
+	defer func() {
+		c.Close()
+		Unmount(mountPoint)
 	}()
 
-	// 等待服务错误或被中断
-	err = <-serveErrCh
-	if err != nil {
+	logger.Info("starting to serve file system")
+	if err := fs.Serve(c, fsys); err != nil {
+		logger.Errorf("failed to serve file system: %v", err)
 		return fmt.Errorf("failed to serve file system: %w", err)
 	}
 
@@ -160,20 +159,20 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 
 // CleanupMounts cleans up all mounted directories
 func CleanupMounts() {
-	mountMutex.RLock()
+	MountMutex.RLock()
 	// 创建副本以避免在遍历过程中修改map
-	mountPoints := make([]string, 0, len(mountMap))
-	for mp := range mountMap {
+	mountPoints := make([]string, 0, len(MountMap))
+	for mp := range MountMap {
 		mountPoints = append(mountPoints, mp)
 	}
-	mountMutex.RUnlock()
+	MountMutex.RUnlock()
 
 	for _, mp := range mountPoints {
-		logger.Info("cleaning up mounted directory: ", mp)
+		logger.Infof("cleaning up mounted directory: ", mp)
 		if err := Unmount(mp); err != nil {
 			logger.Errorf("failed to unmount %s during cleanup: %v", mp, err)
 		} else {
-			logger.Info("successfully unmounted", mp, "during cleanup")
+			logger.Infof("successfully unmounted %s during cleanup", mp)
 		}
 	}
 }
@@ -181,24 +180,27 @@ func CleanupMounts() {
 // Unmount unmounts the file system from the specified mount point
 func Unmount(mountPoint string) error {
 	logger.Debugf("starting unmount process for: %s", mountPoint)
+	// 从已挂载目录列表中移除
+	MountMutex.Lock()
+	defer MountMutex.Unlock()
 
-	// Check if mount point exists
-	if _, err := os.Stat(mountPoint); os.IsNotExist(err) {
-		logger.Errorf("mount point does not exist: %s", mountPoint)
-		return fmt.Errorf("mount point does not exist: %s", mountPoint)
+	fs, ok := MountMap[mountPoint]
+	if !ok {
+		logger.Errorf("mount point not found: %s", mountPoint)
+		return fmt.Errorf("mount point not found: %s", mountPoint)
 	}
 
 	// Unmount the file system
-	logger.Info("attempting to unmount file system")
+	logger.Infof("attempting to unmount for %s", mountPoint)
 	if err := fuse.Unmount(mountPoint); err != nil {
-		logger.Errorf("failed to unmount file system: %v", err)
+		logger.Errorf("failed to unmount file %s: %v", mountPoint, err)
 		return fmt.Errorf("failed to unmount file system: %w", err)
 	}
-	logger.Info("successfully unmounted file system")
-	// 从已挂载目录列表中移除
-	mountMutex.Lock()
-	delete(mountMap, mountPoint)
-	mountMutex.Unlock()
+	logger.Info("successfully unmounted file %s", mountPoint)
+	if fs != nil && fs.KVStore != nil {
+		fs.KVStore.Close()
+	}
+	delete(MountMap, mountPoint)
 	logger.Debugf("removed %s from mounted directories list", mountPoint)
 
 	return nil

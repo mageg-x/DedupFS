@@ -355,29 +355,35 @@ func debugBlockAction(mountPoint, blockID string) error {
 	// user.dedupfs.blockconf="{\"Size\":67108864,\"Compress\":false,\"Encrypt\":false,\"Password\":\"\"}"
 	blockConfBytes, err := utils.GetXAttr(mountPoint, "user.dedupfs.blockconf")
 	if err != nil {
+		logger.Errorf("failed to get user.dedupfs.blockconf: %v", err)
 		return fmt.Errorf("failed to get user.dedupfs.blockconf: %w", err)
 	}
 	blockConf := &dfs.BlockConfig{}
 	err = json.Unmarshal(blockConfBytes, blockConf)
 	if err != nil {
+		logger.Errorf("failed to unmarshal block config: %v", err)
 		return fmt.Errorf("failed to unmarshal block config: %w", err)
 	}
 
 	dataDirBytes, err := utils.GetXAttr(mountPoint, "user.dedupfs.datadir")
 	if err != nil {
+		logger.Errorf("failed to get user.dedupfs.datadir: %v", err)
 		return fmt.Errorf("failed to get user.dedupfs.datadir: %w", err)
 	}
 	dataDir := string(dataDirBytes)
 
 	blockPath := filepath.Join(dataDir, dfs.GetBlockPath(blockID))
 	if _, err := os.Stat(blockPath); os.IsNotExist(err) {
+		logger.Errorf("block not found: %s", blockID)
 		return fmt.Errorf("block not found: %s", blockID)
 	} else if err != nil {
+		logger.Errorf("failed to check block: %v", err)
 		return fmt.Errorf("failed to check block: %w", err)
 	}
 
 	blockData, err := ioutil.ReadFile(blockPath)
 	if err != nil {
+		logger.Errorf("failed to read block: %v", err)
 		return fmt.Errorf("failed to read block: %w", err)
 	}
 
@@ -430,6 +436,7 @@ func debugBlockAction(mountPoint, blockID string) error {
 
 		if block.Header.Encrypted {
 			if d, err := utils.Decrypt(block.Data, blockID+blockConf.Password); err != nil {
+				logger.Errorf("decrypt block %s failed: %v", block.Header.ID, err)
 				return fmt.Errorf("decrypt block failed %w", err)
 			} else {
 				block.Data = d
@@ -438,6 +445,7 @@ func debugBlockAction(mountPoint, blockID string) error {
 
 		if block.Header.Compressed {
 			if d, err := utils.Decompress(block.Data); err != nil {
+				logger.Errorf("decompress block %s failed: %v", block.Header.ID, err)
 				return fmt.Errorf("decompress block failed %w", err)
 			} else {
 				block.Data = d

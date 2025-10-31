@@ -97,7 +97,7 @@ func GetChunkMeta(hash string, fs *DedupFS) (*Chunk, error) {
 	}
 
 	// 从 KVStore 读取
-	chunkKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
+	chunkKey := fmt.Sprintf("chunk:%s", hash)
 	var chunk Chunk
 	if err := fs.KVStore.Get(chunkKey, &chunk); err != nil {
 		logger.Warnf("chunk %s not found in kvstore", hash)
@@ -168,7 +168,7 @@ func GetChunkData(hash string, fs *DedupFS) (*Chunk, error) {
 // RemoveChunk 减引用计数，必要时删除
 func RemoveChunk(hash string, fs *DedupFS) error {
 	logger.Debugf("removing chunk %s from filesystem %s", hash, fs.ID)
-	chunkKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
+	chunkKey := fmt.Sprintf("chunk:%s", hash)
 	var chunk Chunk
 	if err := fs.KVStore.Get(chunkKey, &chunk); err != nil {
 		logger.Errorf("chunk %s not found for removal: %v", hash, err)
@@ -216,7 +216,7 @@ func PutChunks(chunks []*Chunk, fs *DedupFS) error {
 		}
 
 		// 从 KVStore 读取
-		chunkKey := fmt.Sprintf("chunk:%s:%s", fs.ID, chunk.Hash)
+		chunkKey := fmt.Sprintf("chunk:%s", chunk.Hash)
 		var c Chunk
 		var exist bool
 		if err := fs.KVStore.Get(chunkKey, &c); err != nil {

@@ -18,9 +18,11 @@ var debugCmd = &cobra.Command{
 
 		switch debugType {
 		case "block":
-			return debugBlockAction(mountPoint, id)
+			debugBlockAction(mountPoint, id)
+			return nil
 		case "inode":
-			return debugINodeAction(mountPoint, id)
+			debugINodeAction(mountPoint, id)
+			return nil
 		default:
 			return fmt.Errorf("invalid debug type: %s, must be 'block' or 'inode'", debugType)
 		}

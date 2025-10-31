@@ -18,6 +18,7 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -77,7 +78,7 @@ func (f *CustomLogFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	// 构建最终日志行：[LEVEL] file:func:line msg
 	// 注意：entry.Message 已经包含了 caller 和内容（由 Debugf/Infof 等构造）
 	ts := time.Now().Format("2006-01-02 15:04:05")
-	msg := fmt.Sprintf("%s %s %s\n", levelColor, ts, entry.Message)
+	msg := fmt.Sprintf("%s [%d] %s %s\n", levelColor, os.Getpid(), ts, entry.Message)
 	return []byte(msg), nil
 }
 
@@ -273,8 +274,8 @@ func GetLogger(name string) *Logger {
 		MaxAge:     config.MaxAge,
 		Compress:   config.Compress,
 	}
-	// logger.SetOutput(io.MultiWriter(os.Stdout, fileWriter))
-	logger.SetOutput(fileWriter)
+	logger.SetOutput(io.MultiWriter(os.Stdout, fileWriter))
+	// logger.SetOutput(fileWriter)
 
 	logger.SetFormatter(&CustomLogFormatter{})
 

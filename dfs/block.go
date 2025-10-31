@@ -309,6 +309,30 @@ func GetBlockPath(blockID string) string {
 	return filepath.Join("blocks", dir1, dir2, dir3, blockID)
 }
 
+func ReadBlockMeta(blockID string, fs *DedupFS) (*Block, error) {
+	blockPath := filepath.Join(fs.DataDir, GetBlockPath(blockID))
+	logger.Debugf("block path: %s", blockPath)
+	mfs := memfs.GetInstance()
+	if mfs == nil {
+		logger.Errorf("memfs not initialized")
+		return nil, fmt.Errorf("memfs not initialized")
+	}
+
+	data, err := mfs.Read(blockPath, nil)
+	if err != nil || data == nil {
+		logger.Errorf("memfs read block failed: %v", err)
+		return nil, fmt.Errorf("memfs read block failed %w", err)
+	}
+	logger.Errorf("successfully read block data, size: %d bytes", len(data))
+
+	block, err := DeserializeBlock(data)
+	if err != nil {
+		logger.Errorf("failed to deserialize block: %v", err)
+		return nil, fmt.Errorf("deserial block failed %w", err)
+	}
+	return block, nil
+}
+
 // ReadBlock 读取 block
 func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 	logger.Debugf("reading block %s for filesystem %s", blockID, fs.ID)
@@ -446,9 +470,14 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 				if d, err := utils.Compress(b.Data); err != nil || d == nil {
 					return nil, fmt.Errorf("compress block failed %w", err)
 				} else {
-					b.Data = d
-					b.Header.Compressed = true
-					b.Header.RealSize = int64(len(b.Data))
+					// 如果压缩后的大小没有什么压缩空间，就放弃，为后续读提速
+					if float32(len(d))/float32(len(b.Data)) > 0.8 {
+						// 放弃
+					} else {
+						b.Data = d
+						b.Header.Compressed = true
+						b.Header.RealSize = int64(len(b.Data))
+					}
 				}
 			}
 
@@ -519,7 +548,7 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 		if len(block.Header.ChunkList) == 0 {
 			// 删除 block 文件
 			blockPath := filepath.Join(fs.DataDir, GetBlockPath(chunk.BlockID))
-			logger.Debugf("removing block %s from memfs", blockPath)
+			logger.Errorf("removing block %s from memfs", blockPath)
 			mfs := memfs.GetInstance()
 			if mfs == nil {
 				logger.Errorf("memfs not initialized")

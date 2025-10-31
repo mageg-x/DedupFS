@@ -19,15 +19,7 @@ type PKV struct {
 }
 
 // GetPKVStore creates a new pebble store instance
-func GetPKVStore(dbPath string, readOnly bool) (KVStore, error) {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	if instance != nil && !instance.(*PKV).closed {
-		logger.Debug("kv store already initialized")
-		return instance, nil
-	}
-
+func NewPKVStore(dbPath string, readOnly bool) (KVStore, error) {
 	logger.Debugf("initializing pebble kv store at path: %s", dbPath)
 
 	pebbleOpts := &pebble.Options{
@@ -71,11 +63,10 @@ func GetPKVStore(dbPath string, readOnly bool) (KVStore, error) {
 
 	logger.Info("pebble kv store initialized successfully")
 
-	instance = &PKV{
+	return &PKV{
 		db:     db,
 		closed: false,
-	}
-	return instance, nil
+	}, nil
 }
 
 // Get retrieves value by key
@@ -344,11 +335,6 @@ func (s *PKV) Close() error {
 
 	s.closed = true
 
-	// Clear the global instance
-	mutex.Lock()
-	defer mutex.Unlock()
-	instance = nil
-
 	return nil
 }
 
@@ -363,6 +349,49 @@ func (s *PKV) checkClosed() error {
 	}
 
 	return nil
+}
+
+// CountByPrefix counts the number of keys matching the given prefix
+func (s *PKV) CountByPrefix(prefix string) (int, error) {
+	if err := s.checkClosed(); err != nil {
+		logger.Debug("count operation failed: store closed")
+		return 0, fmt.Errorf("count %s: %w", prefix, err)
+	}
+
+	logger.Debugf("counting keys with prefix: %s", prefix)
+
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	iter, err := s.db.NewIter(&pebble.IterOptions{
+		LowerBound: []byte(prefix),
+		UpperBound: getUpperBound([]byte(prefix)),
+	})
+	if err != nil {
+		logger.Errorf("failed to create iterator for count: %v", err)
+		return 0, fmt.Errorf("count %s: create iterator: %w", prefix, err)
+	}
+	defer iter.Close()
+
+	count := 0
+	prefixBytes := []byte(prefix)
+
+	// Iterate and count matching keys
+	for iter.SeekGE([]byte(prefix)); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, prefixBytes) {
+			break
+		}
+		count++
+	}
+
+	if err := iter.Error(); err != nil {
+		logger.Errorf("failed to count keys with prefix %s: %v", prefix, err)
+		return 0, fmt.Errorf("count %s: iteration: %w", prefix, err)
+	}
+
+	logger.Debugf("counted %d keys with prefix: %s", count, prefix)
+	return count, nil
 }
 
 // getUpperBound returns the upper bound for prefix iteration

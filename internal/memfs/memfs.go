@@ -190,35 +190,52 @@ func (m *MemFs) Remove(path string) error {
 	logger.Infof("memfs: removed from cache %s", absPath)
 
 	// 删除磁盘文件
-	if _, err := os.Stat(absPath); err == nil {
-		if err := os.Remove(absPath); err != nil {
-			return err
-		}
-
-		dir := filepath.Dir(path)
-		for i := 0; i < 3; i++ {
-			// 安全边界：避免删除 . / 根目录 / 当前工作目录等
-			if dir == "/" || dir == "." || dir == "" {
-				break
+	delfile := func(_filepath string) error {
+		if _, err := os.Stat(_filepath); err == nil {
+			if err := os.Remove(_filepath); err != nil {
+				logger.Errorf("memfs: remove file failed %s: %v", _filepath, err)
+				return err
 			}
 
-			// 尝试删除（os.Remove 只能删空目录）
-			if err := os.Remove(dir); err != nil {
-				// 目录非空、不存在、权限不足等 → 停止向上删
-				break
-			}
+			dir := filepath.Dir(_filepath)
+			for i := 0; i < 3; i++ {
+				// 安全边界：避免删除 . / 根目录 / 当前工作目录等
+				if dir == "/" || dir == "." || dir == "" {
+					break
+				}
 
-			// 成功删除，继续向上
-			dir = filepath.Dir(dir)
+				// 尝试删除（os.Remove 只能删空目录）
+				if err := os.Remove(dir); err != nil {
+					// 目录非空、不存在、权限不足等 → 停止向上删
+					break
+				}
+
+				// 成功删除，继续向上
+				dir = filepath.Dir(dir)
+				return nil
+			}
 		}
+
+		// 因为还在缓存中没有写，或者正在写进行中
+		logger.Errorf("memfs: remove file not found %s", _filepath)
+		return errors.New("file not found")
 	}
+
+	if err := delfile(absPath); err != nil {
+		// 因为删除失败， 延迟3s再删除一次
+		time.AfterFunc(3*time.Second, func() {
+			logger.Infof("memfs: remove file retry %s", absPath)
+			delfile(absPath)
+		})
+	}
+
 	return nil
 }
 
 // flushPaths 刷盘指定路径（带版本检查）
 func (m *MemFs) flushPaths(paths []string) {
-	for _, p := range paths {
-		val, ok := m.cache.Load(p)
+	for _, path := range paths {
+		val, ok := m.cache.Load(path)
 		if !ok {
 			continue
 		}
@@ -233,13 +250,13 @@ func (m *MemFs) flushPaths(paths []string) {
 			if processed, err := processor.Func(data, processor.Params); err == nil {
 				writeData = processed
 			} else {
-				logger.Errorf("memfs: processor error on flush %s: %v", p, err)
+				logger.Errorf("memfs: processor error on flush %s: %v", path, err)
 				continue
 			}
 		}
 
 		// 确保目录存在
-		if dir := filepath.Dir(p); dir != "." {
+		if dir := filepath.Dir(path); dir != "." {
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				logger.Errorf("memfs: mkdir failed %s: %v", dir, err)
 				continue
@@ -247,19 +264,33 @@ func (m *MemFs) flushPaths(paths []string) {
 		}
 
 		// 写磁盘（锁外执行！）
-		if err := os.WriteFile(p, writeData, 0644); err != nil {
-			logger.Errorf("memfs: write file failed %s: %v", p, err)
-			continue
+		// 再次检查是否已经被删除
+		if _, ok := m.cache.Load(path); ok {
+			// 先写临时文件
+			tmpFile := path + ".tmp"
+			defer os.Remove(tmpFile)
+			if err := os.WriteFile(tmpFile, writeData, 0644); err != nil {
+				logger.Errorf("memfs: write file failed %s: %v", tmpFile, err)
+				continue
+			}
+			// 再 rename
+			if err := os.Rename(tmpFile, path); err != nil {
+				logger.Errorf("memfs: rename file failed %s: %v", path, err)
+				continue
+			}
+		} else {
+			logger.Errorf("memfs: already removed from cache %s", path)
 		}
 
 		// 关键：加锁检查版本，再决定是否删除缓存
-		utils.WithLockKey(p, func() error {
-			if current, ok := m.cache.Load(p); ok {
+		utils.WithLockKey(path, func() error {
+			if current, ok := m.cache.Load(path); ok {
 				if current.(*FileData).version == version {
-					m.cache.Delete(p)
-					logger.Infof("memfs: flushed and removed from cache %s", p)
+					// 写完就删除缓存，避免 重复写 磁盘
+					m.cache.Delete(path)
+					logger.Infof("memfs: flushed and removed from cache %s", path)
 				} else {
-					logger.Infof("memfs: flushed but cache modified (v%d != v%d) %s", current.(*FileData).version, version, p)
+					logger.Infof("memfs: flushed but cache modified (v%d != v%d) %s", current.(*FileData).version, version, path)
 				}
 			}
 			return nil

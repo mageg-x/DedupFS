@@ -445,6 +445,7 @@ func (m inodeModel) View() string {
 func debugINodeAction(mountPoint, inodeName string) error {
 	dataDirBytes, err := utils.GetXAttr(mountPoint, "user.dedupfs.datadir")
 	if err != nil {
+		logger.Errorf("failed to get user.dedupfs.datadir: %v", err)
 		return fmt.Errorf("failed to get user.dedupfs.datadir: %w", err)
 	}
 	dataDir := string(dataDirBytes)
@@ -452,16 +453,19 @@ func debugINodeAction(mountPoint, inodeName string) error {
 	inodePath := filepath.Join(mountPoint, inodeName)
 	inodePath, err = filepath.Abs(inodePath)
 	if err != nil {
+		logger.Errorf("failed to get absolute path: %v", err)
 		return fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
 	// 通过stat 获取 inode 编号
 	fileInfo, err := os.Stat(inodePath)
 	if err != nil {
+		logger.Errorf("failed to stat file: %v", err)
 		return fmt.Errorf("failed to stat file: %w", err)
 	}
 	stat, ok := fileInfo.Sys().(*syscall.Stat_t)
 	if !ok {
+		logger.Error("failed to get stat info")
 		return fmt.Errorf("failed to get stat info")
 	}
 	ino := stat.Ino

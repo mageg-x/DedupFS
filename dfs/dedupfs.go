@@ -149,7 +149,7 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	fs.KVStore, err = kvstore.GetKVStore(path.Join(fs.MetaDir, "dedupfs.db"), false)
+	fs.KVStore, err = kvstore.NewKVStore(path.Join(fs.MetaDir, "dedupfs.db"), false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kv store: %w", err)
 	}
@@ -196,7 +196,7 @@ func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
 	nodeSet := make(map[uint64]bool)      // 记录所有存在的节点
 
 	// 第一阶段：扫描所有inode并构建关系
-	prefix := fmt.Sprintf("inode:%s:", fs.ID)
+	prefix := "inode:"
 	startKey := ""
 	scanCount := 0
 

@@ -645,7 +645,7 @@ func CacheINode(fs *DedupFS, inode *INode) error {
 		return fmt.Errorf("invalid param for cache node")
 	}
 
-	key := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
+	key := fmt.Sprintf("inode:%d", inode.Ino)
 	G_INODE_CACHE.Put(key, inode)
 
 	if len(inode.Chunks) > 0 {
@@ -667,7 +667,7 @@ func CacheINode(fs *DedupFS, inode *INode) error {
 
 func SaveINode(fs *DedupFS, inode *INode) error {
 	logger.Debugf("saving inode %d (name=%s, kind=%s, chunks=%d, size=%d) to filesystem %s", inode.Ino, inode.Name, inode.Kind, len(inode.Chunks), inode.Size, fs.ID)
-	key := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
+	key := fmt.Sprintf("inode:%d", inode.Ino)
 	if len(inode.Chunks) > 0 {
 		savaChunks := make([]*Chunk, 0)
 		newChunks := make([]*INodeChunk, 0, len(inode.Chunks))
@@ -797,7 +797,7 @@ func FlushINode(fs *DedupFS, inode *INode) error {
 
 func GetINode(fs *DedupFS, ino uint64) (*INode, error) {
 	logger.Debugf("getting inode %d from filesystem %s", ino, fs.ID)
-	key := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
+	key := fmt.Sprintf("inode:%d", ino)
 	if inode, exists := G_INODE_CACHE.Get(key); exists && inode != nil {
 		logger.Debugf("inode %d name %s size %d found in cache", inode.Ino, inode.Name, inode.Size)
 		return inode, nil
@@ -830,7 +830,7 @@ func DelINode(fs *DedupFS, ino uint64) error {
 		}
 	}
 
-	key := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
+	key := fmt.Sprintf("inode:%d", ino)
 	G_INODE_CACHE.Del(key)
 
 	err := fs.KVStore.Del(key)

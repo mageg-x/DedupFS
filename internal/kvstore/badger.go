@@ -20,14 +20,7 @@ type BKV struct {
 }
 
 // NewBKV creates a new badgerdb store instance
-func GetBKVStore(dbPath string, readOnly bool) (KVStore, error) {
-	mutex.Lock()
-	defer mutex.Unlock()
-	if instance != nil {
-		logger.Debug("kv store already initialized")
-		return instance, nil
-	}
-
+func NewBKVStore(dbPath string, readOnly bool) (KVStore, error) {
 	logger.Debugf("initializing badgerdb kv store at path: %s", dbPath)
 
 	opts := badger.DefaultOptions(dbPath)
@@ -262,6 +255,44 @@ func (s *BKV) Scan(prefix, startKey string, limit int) ([]string, string, error)
 
 	logger.Debugf("scan returned %d keys, nextKey: %s", len(keys), nextKey)
 	return keys, nextKey, nil
+}
+
+// CountByPrefix counts the number of keys matching the given prefix
+func (s *BKV) CountByPrefix(prefix string) (int, error) {
+	if err := s.checkClosed(); err != nil {
+		logger.Debug("count operation failed: store closed")
+		return 0, fmt.Errorf("count %s: %w", prefix, err)
+	}
+
+	logger.Debugf("counting keys with prefix: %s", prefix)
+
+	var count int
+
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false // 只需要计算数量，不需要值
+		
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		prefixBytes := []byte(prefix)
+		for it.Seek(prefixBytes); it.ValidForPrefix(prefixBytes); it.Next() {
+			count++
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		logger.Errorf("failed to count keys with prefix %s: %v", prefix, err)
+		return 0, fmt.Errorf("count %s: iteration: %w", prefix, err)
+	}
+
+	logger.Debugf("counted %d keys with prefix: %s", count, prefix)
+	return count, nil
 }
 
 // CreateSnapshot creates a snapshot of the kv store in a separate goroutine

@@ -27,6 +27,10 @@ var rootCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		setLogLevel()
 	},
+	// 禁用自动生成的 completion 命令
+	CompletionOptions: cobra.CompletionOptions{
+		DisableDefaultCmd: true,
+	},
 }
 
 // ExecuteCommand processes the given command and executes the corresponding functionality
@@ -116,12 +120,14 @@ func init() {
 	initUnmount()
 	initStats()
 	initDebug()
-	
+	initServer()
+
 	// 添加命令到 root
 	rootCmd.AddCommand(mountCmd)
 	rootCmd.AddCommand(unmountCmd)
 	rootCmd.AddCommand(statsCmd)
 	rootCmd.AddCommand(debugCmd)
+	rootCmd.AddCommand(serverCmd)
 
 	// 添加全局的 verbose 标志（用于帮助信息）
 	rootCmd.PersistentFlags().CountVarP(&verbose, "verbose", "v", "Increase verbosity level (use -v for warn, -vv for info, -vvv for debug, -vvvv for trace)")

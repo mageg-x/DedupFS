@@ -4,16 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 
 	"github.com/mageg-x/dedupfs/internal/log"
 )
 
 var (
 	// get logger instance for logging
-	logger   = log.GetLogger("dedupfs")
-	instance KVStore
-	mutex    sync.Mutex
+	logger = log.GetLogger("dedupfs")
 
 	// Common errors for kv store operations
 	ErrKeyNotFound      = errors.New("key not found")
@@ -32,18 +29,20 @@ type KVStore interface {
 	List(prefix string) ([]string, error)
 	// Scan scans the kv store for keys matching prefix, starting from startKey
 	Scan(prefix, startKey string, limit int) (keys []string, nextKey string, err error)
+	// CountByPrefix counts the number of keys matching the given prefix
+	CountByPrefix(prefix string) (int, error)
 	// Close closes the kv store
 	Close() error
 	// CreateSnapshot creates a snapshot of the kv store
 	CreateSnapshot(path string) error
 }
 
-func GetKVStore(dbPath string, readOnly bool) (KVStore, error) {
+func NewKVStore(dbPath string, readOnly bool) (KVStore, error) {
 	dbPath = dbPath + "/pebble"
 	// 创建目录
 	if err := os.MkdirAll(dbPath, 0755); err != nil {
 		logger.Errorf("failed to create directory: %v", err)
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
-	return GetPKVStore(dbPath, readOnly)
+	return NewPKVStore(dbPath, readOnly)
 }
