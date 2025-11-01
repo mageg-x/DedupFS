@@ -223,7 +223,7 @@ ls -lh /mnt/dfs/
 # 调试inode信息
 ./dedupfs debug /mnt/dfs inode  file.txt
 ```
-
+![Stats Command Interface](stats.png)
 ### 高级配置
 
 所有配置参数现在都通过命令行参数提供。要查看完整的可用选项列表，请运行：
@@ -283,7 +283,7 @@ DedupFS 采用服务器-客户端架构，服务器进程负责实际的数据�
 
 DedupFS 包含强大的调试工具，用于检查内部结构：
 
-#### 块调试
+#### Block调试
 
 `debug block` 命令允许您检查块的详细信息，包括块内的数据块、压缩状态和数据布局。
 
@@ -403,7 +403,7 @@ DedupFS 采用多层次的完整性保护：
 特别适合：
 - 备份数据，备份数据存在大量相似性，重复率达到 90%以上。非常适合用dedupfs进行备份
 - 存储数据，系统镜像，虚拟机镜像，docker 镜像， 数据库原始数据，代码仓库 和 文本类型文档。这些数据存在巨大的压缩率和内容去重率
-- 增量数据处理，当年还在发愁如何增量备份，自己设计版本号管理数据时候。dedupfs可以轻松解决。你方向全量复制数据，dedupfs底层已经帮你把重复数据去重了，不会额外占用任何存储空间
+- 增量数据处理，当年还在发愁如何增量备份，自己设计版本号管理数据时候。dedupfs可以轻松解决。你放心的全量复制数据，dedupfs底层已经帮你把重复数据去重了，不会额外占用任何存储空间
 
 
 
@@ -421,7 +421,7 @@ DedupFS 让存储效率提升变得简单直接。只需使用您首选的命令
 # 使用调试工具检查内部结构
 ./dedupfs debug /path/to/mountpoint block blockID
 ./dedupfs debug /path/to/mountpoint inode file.txt
-```bash
+
 # 完成后卸载并停止服务器
 ./dedupfs unmount /path/to/mountpoint
 ./dedupfs server stop

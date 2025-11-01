@@ -227,7 +227,7 @@ ls -lh /mnt/dfs/
 # Debug inode information
 ./dedupfs debug /mnt/dfs inode file.txt
 ```
-
+![Stats Command Interface](stats.png)
 ### Advanced Configuration
 
 All configuration parameters are now provided via command line arguments. To get a complete list of available options, run:
@@ -408,7 +408,6 @@ DedupFS makes storage efficiency improvement simple and straightforward. Just us
 ./dedupfs mount /path/to/mountpoint /path/to/data
 
 # Use debug tools to examine internal structure
-```bash
 ./dedupfs debug /path/to/mountpoint block blockID
 ./dedupfs debug /path/to/mountpoint inode file.txt
 ```
