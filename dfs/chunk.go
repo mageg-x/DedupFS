@@ -2,14 +2,13 @@ package dfs
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 
 	fastcdc "github.com/PlakarKorp/go-cdc-chunkers"
 	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/fastcdc"
-	"lukechampine.com/blake3"
+	"github.com/cespare/xxhash/v2"
 
 	"github.com/mageg-x/dedupfs/internal/cache"
 )
@@ -69,8 +68,10 @@ func (c *Chunk) Merge(other *Chunk) {
 
 // calcHash 使用 blake3
 func calcHash(data []byte) string {
-	fp := blake3.Sum256(data)
-	hash := hex.EncodeToString(fp[:20])
+	// fp := blake3.Sum256(data)
+	// hash := hex.EncodeToString(fp[:20])
+	fp := xxhash.Sum64(data)
+	hash := fmt.Sprintf("%x", fp)
 	return hash
 }
 

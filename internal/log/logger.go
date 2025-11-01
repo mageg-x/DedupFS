@@ -18,6 +18,7 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -273,8 +274,8 @@ func GetLogger(name string) *Logger {
 		MaxAge:     config.MaxAge,
 		Compress:   config.Compress,
 	}
-	// logger.SetOutput(io.MultiWriter(os.Stdout, fileWriter))
-	logger.SetOutput(fileWriter)
+	logger.SetOutput(io.MultiWriter(os.Stdout, fileWriter))
+	// logger.SetOutput(fileWriter)
 
 	logger.SetFormatter(&CustomLogFormatter{})
 

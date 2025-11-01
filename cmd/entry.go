@@ -121,6 +121,7 @@ func init() {
 	initStats()
 	initDebug()
 	initServer()
+	initRestore()
 
 	// 添加命令到 root
 	rootCmd.AddCommand(mountCmd)
@@ -128,6 +129,7 @@ func init() {
 	rootCmd.AddCommand(statsCmd)
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(serverCmd)
+	rootCmd.AddCommand(restoreCmd)
 
 	// 添加全局的 verbose 标志（用于帮助信息）
 	rootCmd.PersistentFlags().CountVarP(&verbose, "verbose", "v", "Increase verbosity level (use -v for warn, -vv for info, -vvv for debug, -vvvv for trace)")

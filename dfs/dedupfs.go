@@ -176,6 +176,12 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		fs.NextNodeID.Store(1) // 1已经用于根目录
 	}
 
+	// 定时备份任务
+	d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
+	fs.Timer = time.AfterFunc(d, func() {
+		fs.BackupINode()
+	})
+
 	// 初始化 一些属性
 	root.SetXattr("user.dedupfs.version", []byte("0.1.0"))
 	root.SetXattr("user.dedupfs.id", []byte(fs.ID))
@@ -189,10 +195,7 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		logger.Errorf("failed to save root inode: %v", err)
 		return nil, err
 	}
-	d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
-	fs.Timer = time.AfterFunc(d, func() {
-		fs.BackupINode()
-	})
+
 	return fs, nil
 }
 
@@ -216,7 +219,7 @@ func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
 	scanCount := 0
 
 	for {
-		keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 1000)
+		keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 10000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan keys with prefix %s: %w", prefix, err)
 		}
@@ -395,18 +398,26 @@ func (fs *DedupFS) CreateNode(parentID uint64, uid, gid uint32, name string, kin
 	return inode, nil
 }
 
+type BackUpINode struct {
+	Ino           uint64   `msgpack:"i"`
+	Parent        uint64   `msgpack:"p"`
+	Kind          FileType `msgpack:"k"`
+	Name          string   `msgpack:"n"`
+	Chunks        []string `msgpack:"c"`
+	SymlinkTarget *string  `msgpack:"l"`
+}
+
 func (fs *DedupFS) BackupINode() error {
-	// 备份只备份必需的字段
-	type BackUpINode struct {
-		Ino           uint64   `msgpack:"ino"`
-		Parent        uint64   `msgpack:"parent"`
-		Kind          FileType `msgpack:"kind"`
-		Name          string   `msgpack:"name"`
-		Chunks        []string `msgpack:"chunks"`
-		SymlinkTarget *string  `msgpack:"symlink_target"`
-	}
+	logger.Debugf("backing up filesystem node meta")
 
 	go func() {
+		defer func() {
+			d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
+			fs.Timer = time.AfterFunc(d, func() {
+				fs.BackupINode()
+			})
+		}()
+
 		if fs.Dirty {
 			fs.Dirty = false
 
@@ -419,7 +430,7 @@ func (fs *DedupFS) BackupINode() error {
 			// 计算备份一次耗时
 			start := time.Now()
 			for {
-				keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 100000)
+				keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 10000)
 				if err != nil {
 					logger.Errorf("failed to scan inodes: %v", err)
 					return
@@ -450,9 +461,11 @@ func (fs *DedupFS) BackupINode() error {
 				} else {
 					block := &Block{
 						Header: BlockHeader{
-							ID:   fmt.Sprintf("%03d00000000000000000000000000000", blockIdx),
-							Ver:  1,
-							Etag: md5.Sum(data),
+							ID:        fmt.Sprintf("%03d00000000000000000000000000000", blockIdx),
+							Ver:       1,
+							Etag:      md5.Sum(data),
+							TotalSize: int64(len(data)),
+							CreatedAt: uint64(time.Now().UnixNano()),
 							ChunkList: []*BlockChunk{
 								{
 									Hash: calcHash(data),
@@ -460,6 +473,7 @@ func (fs *DedupFS) BackupINode() error {
 								},
 							},
 						},
+						Data: data,
 					}
 
 					if err := SaveBlock(block, fs); err != nil {
@@ -478,13 +492,8 @@ func (fs *DedupFS) BackupINode() error {
 				startKey = nextKey
 			}
 
-			logger.Errorf("backup inodes done, cost: %s", time.Since(start))
+			logger.Infof("backup inodes done, cost: %s", time.Since(start))
 		}
-
-		d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
-		fs.Timer = time.AfterFunc(d, func() {
-			fs.BackupINode()
-		})
 	}()
 	return nil
 }

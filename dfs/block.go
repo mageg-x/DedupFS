@@ -309,8 +309,8 @@ func GetBlockPath(blockID string) string {
 	return filepath.Join("blocks", dir1, dir2, dir3, blockID)
 }
 
-func ReadBlockMeta(blockID string, fs *DedupFS) (*Block, error) {
-	blockPath := filepath.Join(fs.DataDir, GetBlockPath(blockID))
+func ReadBlockMeta(blockID string, dataDir string) (*Block, error) {
+	blockPath := filepath.Join(dataDir, GetBlockPath(blockID))
 	logger.Debugf("block path: %s", blockPath)
 	mfs := memfs.GetInstance()
 	if mfs == nil {
@@ -323,7 +323,7 @@ func ReadBlockMeta(blockID string, fs *DedupFS) (*Block, error) {
 		logger.Errorf("memfs read block failed: %v", err)
 		return nil, fmt.Errorf("memfs read block failed %w", err)
 	}
-	logger.Errorf("successfully read block data, size: %d bytes", len(data))
+	logger.Debugf("successfully read block data, size: %d bytes", len(data))
 
 	block, err := DeserializeBlock(data)
 	if err != nil {
@@ -356,7 +356,8 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 		logger.Errorf("memfs read block failed: %v", err)
 		return nil, fmt.Errorf("memfs read block failed %w", err)
 	}
-	logger.Errorf("successfully read block data, size: %d bytes", len(data))
+
+	logger.Debugf("successfully read block data, size: %d bytes", len(data))
 
 	block, err := DeserializeBlock(data)
 	if err != nil {

@@ -271,7 +271,7 @@ func calculateNodeStats(fs *dfs.DedupFS) (fileCount, dirCount int, totalSize uin
 					chunkMap[chunk.Hash] = struct{}{}
 					if c, err := dfs.GetChunkMeta(chunk.Hash, fs); err == nil && c != nil {
 						if _, ok := blockMap[c.BlockID]; !ok {
-							if b, err := dfs.ReadBlockMeta(c.BlockID, fs); err == nil && b != nil {
+							if b, err := dfs.ReadBlockMeta(c.BlockID, fs.DataDir); err == nil && b != nil {
 								blockMap[c.BlockID] = b.Header.RealSize
 							} else {
 								logger.Errorf("failed to read block %s: %v", c.BlockID, err)
@@ -281,7 +281,7 @@ func calculateNodeStats(fs *dfs.DedupFS) (fileCount, dirCount int, totalSize uin
 						logger.Errorf("failed to get chunk %s meta: %v", chunk.Hash, err)
 					}
 				}
-				if inode.Kind == dfs.FileTypeFile {
+				if inode.Kind == dfs.FileTypeFile || inode.Kind == dfs.FileTypeSymlink {
 					fileCount++
 					totalSize += inode.Size
 				} else if inode.Kind == dfs.FileTypeDir && ino != 1 {

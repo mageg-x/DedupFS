@@ -3,7 +3,9 @@ package utils
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -39,4 +41,20 @@ func GetXAttr(path, attrName string) ([]byte, error) {
 	}
 
 	return buf[:n], nil
+}
+
+func ListAllFiles(root string) ([]string, error) {
+	var files []string
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err // 跳过无法访问的路径（或返回 err 中止）
+		}
+		if !d.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+
+	return files, err
 }
