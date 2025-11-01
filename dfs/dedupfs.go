@@ -480,7 +480,7 @@ func (fs *DedupFS) BackupINode() error {
 						logger.Errorf("failed to save block: %v", err)
 						return
 					} else {
-						logger.Errorf("success saved block: %s", block.Header.ID)
+						logger.Infof("success saved block: %s", block.Header.ID)
 						blockIdx++
 						bakINodes = []BackUpINode{}
 					}

@@ -363,6 +363,7 @@ Available commands include:
 - `stats`: Display statistics for all mounted filesystems
 - `debug`: Advanced debugging tools (block, inode)
 - `server`: Manage dedupfs server (start, stop)
+- `restore`: Restore data from dedupfs to target path
 ```
 
 For detailed command usage, refer to command help or source code in the `cmd` directory:
@@ -407,12 +408,18 @@ DedupFS makes storage efficiency improvement simple and straightforward. Just us
 ./dedupfs mount /path/to/mountpoint /path/to/data
 
 # Use debug tools to examine internal structure
+```bash
 ./dedupfs debug /path/to/mountpoint block blockID
 ./dedupfs debug /path/to/mountpoint inode file.txt
+```
 
+```bash
 # Unmount and stop server when finished
 ./dedupfs unmount /path/to/mountpoint
 ./dedupfs server stop
+
+# Restore data from dedupfs to target path
+./dedupfs restore /path/to/data /path/to/restore/target
 
 # Start enjoying intelligent storage optimization!
 ```

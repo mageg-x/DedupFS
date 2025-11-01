@@ -8,6 +8,7 @@ import (
 
 	"github.com/mageg-x/dedupfs/dfs"
 	"github.com/mageg-x/dedupfs/internal/utils"
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -154,6 +155,18 @@ func performRestore(dataDir, toPath string) error {
 	successCount := 0
 	errorCount := 0
 
+	// 总inode数量
+	totalInodes := len(inodeMap)
+	processedInodes := 0
+
+	// 创建进度条
+	bar := progressbar.Default(int64(totalInodes), "Processing inodes")
+	bar.Describe("Restoring files...")
+
+	// 计算初始栈中的节点数量，避免重复计数
+	stackedNodes := make(map[uint64]bool)
+	stackedNodes[1] = true
+
 	// 非递归深度优先遍历
 	for len(stack) > 0 {
 		// 弹出栈顶元素
@@ -165,6 +178,8 @@ func performRestore(dataDir, toPath string) error {
 		if !exists {
 			logger.Errorf("INode not found for ID %d", item.inodeID)
 			errorCount++
+			processedInodes++
+			bar.Add(1)
 			continue
 		}
 
@@ -177,6 +192,10 @@ func performRestore(dataDir, toPath string) error {
 			successCount++
 		}
 
+		// 更新进度
+		processedInodes++
+		bar.Add(1)
+
 		// 如果是目录，将其子节点加入栈中（反向添加以保持正确的处理顺序）
 		if inode.Kind == dfs.FileTypeDir {
 			// 获取节点的子节点
@@ -187,14 +206,22 @@ func performRestore(dataDir, toPath string) error {
 
 				// 反向遍历子节点以保持正确的顺序
 				for i := len(node.Children) - 1; i >= 0; i-- {
-					stack = append(stack, stackItem{
-						inodeID: node.Children[i].ID,
-						dirPath: subDirPath,
-					})
+					childID := node.Children[i].ID
+					// 避免重复添加节点
+					if !stackedNodes[childID] {
+						stack = append(stack, stackItem{
+							inodeID: childID,
+							dirPath: subDirPath,
+						})
+						stackedNodes[childID] = true
+					}
 				}
 			}
 		}
 	}
+
+	// 确保进度条完成
+	bar.Finish()
 
 	logger.Infof("File restoration completed: %d successful, %d failed", successCount, errorCount)
 	logger.Infof("Successfully restored data from %s to %s", dataDir, toPath)

@@ -379,6 +379,7 @@ DedupFS 提供全面的命令行接口，用于所有操作。所有参数都通
 - `stats`: 显示去重统计信息
 - `debug`: 高级调试工具（block、inode）
 - `server`: 服务器管理（start、stop）
+- `restore`: 从dedupfs数据恢复到目标路径
 ```
 
 ## 常见问题
@@ -420,10 +421,13 @@ DedupFS 让存储效率提升变得简单直接。只需使用您首选的命令
 # 使用调试工具检查内部结构
 ./dedupfs debug /path/to/mountpoint block blockID
 ./dedupfs debug /path/to/mountpoint inode file.txt
-
+```bash
 # 完成后卸载并停止服务器
 ./dedupfs unmount /path/to/mountpoint
 ./dedupfs server stop
+
+# 从dedupfs数据恢复到目标路径
+./dedupfs restore /path/to/data /path/to/restore/target
 
 # 开始享受智能存储优化！
 ```
