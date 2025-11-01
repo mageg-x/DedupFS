@@ -17,6 +17,8 @@ var (
 	ErrKeyAlreadyExists = errors.New("key already exists")
 )
 
+type Notifier func(op, key string, value interface{})
+
 // KVStore is a generic type kv store interface
 type KVStore interface {
 	// Get retrieves value by key, deserializes result into value
@@ -33,16 +35,13 @@ type KVStore interface {
 	CountByPrefix(prefix string) (int, error)
 	// Close closes the kv store
 	Close() error
-	// CreateSnapshot creates a snapshot of the kv store
-	CreateSnapshot(path string) error
 }
 
-func NewKVStore(dbPath string, readOnly bool) (KVStore, error) {
-	dbPath = dbPath + "/pebble"
+func NewKVStore(dbPath string, readOnly bool, notifier Notifier) (KVStore, error) {
 	// 创建目录
 	if err := os.MkdirAll(dbPath, 0755); err != nil {
 		logger.Errorf("failed to create directory: %v", err)
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
-	return NewPKVStore(dbPath, readOnly)
+	return NewPKVStore(dbPath, readOnly, notifier)
 }

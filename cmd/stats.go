@@ -109,7 +109,7 @@ func statsAction(cmd *cobra.Command, args []string) error {
 			{"chunkCount", "Total Chunks"},
 			{"blockCount", "Blocks"},
 			{"refChunkCount", "Referenced Chunks"},
-			{"deduplicationRatio", "Deduplication Ratio"},
+			{"deduplicationRatio", "Compression Ratio"},
 			{"lastUpdated", "Last Updated"},
 		}
 
@@ -126,7 +126,7 @@ func statsAction(cmd *cobra.Command, args []string) error {
 					case "spaceUsed", "realSize":
 						value = formatBytes(getFloatValue(fs, f.Key, 0))
 					case "deduplicationRatio":
-						value = fmt.Sprintf("%.2f%%", getFloatValue(fs, f.Key, 0))
+						value = fmt.Sprintf("%.2f X", getFloatValue(fs, f.Key, 0))
 					default:
 						value = getStringValue(fs, f.Key, "unknown")
 					}
@@ -205,7 +205,7 @@ func collectFilesystemStats(mountPoint string, fs *dfs.DedupFS) map[string]inter
 		"chunkCount":         float64(0),
 		"blockCount":         float64(0),
 		"refChunkCount":      float64(0),
-		"deduplicationRatio": 0.0,
+		"deduplicationRatio": 1.0,
 		"lastUpdated":        time.Now().Format(time.RFC3339),
 	}
 
@@ -221,9 +221,9 @@ func collectFilesystemStats(mountPoint string, fs *dfs.DedupFS) map[string]inter
 		// 计算真实的重复数据删除率
 		var dedupRatio float64
 		if totalSize > 0 && realSize > 0 {
-			dedupRatio = 100.0 * (float64(totalSize) - float64(realSize)) / float64(totalSize)
+			dedupRatio = (float64(totalSize)) / float64(realSize)
 		} else {
-			dedupRatio = 0.0
+			dedupRatio = 1.0
 		}
 		stats["deduplicationRatio"] = dedupRatio
 	}

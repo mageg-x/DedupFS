@@ -200,6 +200,9 @@ func Unmount(mountPoint string) error {
 	if fs != nil && fs.KVStore != nil {
 		fs.KVStore.Close()
 	}
+	if fs != nil && fs.Timer != nil {
+		fs.Timer.Stop()
+	}
 	delete(MountMap, mountPoint)
 	logger.Debugf("removed %s from mounted directories list", mountPoint)
 

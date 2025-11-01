@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/mageg-x/dedupfs/internal/kvstore"
 	"github.com/mageg-x/dedupfs/internal/log"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 var (
@@ -53,6 +55,8 @@ type DedupFS struct {
 	RootNode   *Tree
 	KVStore    kvstore.KVStore
 	mutex      sync.RWMutex
+	Dirty      bool
+	Timer      *time.Timer
 }
 
 // CheckPermission 统一的权限校验方法
@@ -149,7 +153,14 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	fs.KVStore, err = kvstore.NewKVStore(path.Join(fs.MetaDir, "dedupfs.db"), false)
+	fs.KVStore, err = kvstore.NewKVStore(path.Join(fs.MetaDir, "dedupfs.db"), false, func(op, key string, value interface{}) {
+		if op == "set" || op == "del" {
+			if strings.HasPrefix(key, "inode:") {
+				fs.Dirty = true
+			}
+		}
+	})
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kv store: %w", err)
 	}
@@ -178,6 +189,10 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		logger.Errorf("failed to save root inode: %v", err)
 		return nil, err
 	}
+	d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
+	fs.Timer = time.AfterFunc(d, func() {
+		fs.BackupINode()
+	})
 	return fs, nil
 }
 
@@ -378,6 +393,100 @@ func (fs *DedupFS) CreateNode(parentID uint64, uid, gid uint32, name string, kin
 
 	logger.Debugf("created %s node: %s with ino %d", kind, name, ino)
 	return inode, nil
+}
+
+func (fs *DedupFS) BackupINode() error {
+	// 备份只备份必需的字段
+	type BackUpINode struct {
+		Ino           uint64   `msgpack:"ino"`
+		Parent        uint64   `msgpack:"parent"`
+		Kind          FileType `msgpack:"kind"`
+		Name          string   `msgpack:"name"`
+		Chunks        []string `msgpack:"chunks"`
+		SymlinkTarget *string  `msgpack:"symlink_target"`
+	}
+
+	go func() {
+		if fs.Dirty {
+			fs.Dirty = false
+
+			prefix := "inode:"
+			startKey := ""
+
+			blockIdx := 0
+			bakINodes := []BackUpINode{}
+
+			// 计算备份一次耗时
+			start := time.Now()
+			for {
+				keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 100000)
+				if err != nil {
+					logger.Errorf("failed to scan inodes: %v", err)
+					return
+				}
+				for _, key := range keys {
+					var inode *INode
+					if err := fs.KVStore.Get(key, &inode); err != nil {
+						logger.Errorf("failed to get inode %s: %v", key, err)
+						continue
+					}
+					backupINode := BackUpINode{
+						Ino:           inode.Ino,
+						Parent:        inode.Parent,
+						Kind:          inode.Kind,
+						Name:          inode.Name,
+						Chunks:        []string{},
+						SymlinkTarget: inode.SymlinkTarget,
+					}
+					for _, chunk := range inode.Chunks {
+						backupINode.Chunks = append(backupINode.Chunks, chunk.Hash)
+					}
+					bakINodes = append(bakINodes, backupINode)
+				}
+
+				if data, err := msgpack.Marshal(bakINodes); err != nil {
+					logger.Errorf("failed to marshal inodes: %v", err)
+					return
+				} else {
+					block := &Block{
+						Header: BlockHeader{
+							ID:   fmt.Sprintf("%03d00000000000000000000000000000", blockIdx),
+							Ver:  1,
+							Etag: md5.Sum(data),
+							ChunkList: []*BlockChunk{
+								{
+									Hash: calcHash(data),
+									Size: int32(len(data)),
+								},
+							},
+						},
+					}
+
+					if err := SaveBlock(block, fs); err != nil {
+						logger.Errorf("failed to save block: %v", err)
+						return
+					} else {
+						logger.Errorf("success saved block: %s", block.Header.ID)
+						blockIdx++
+						bakINodes = []BackUpINode{}
+					}
+				}
+
+				if nextKey == "" {
+					break
+				}
+				startKey = nextKey
+			}
+
+			logger.Errorf("backup inodes done, cost: %s", time.Since(start))
+		}
+
+		d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
+		fs.Timer = time.AfterFunc(d, func() {
+			fs.BackupINode()
+		})
+	}()
+	return nil
 }
 
 // Attr retrieves the attributes of a node
@@ -1152,7 +1261,7 @@ func (fn FileNode) Readlink(ctx context.Context, req *fuse.ReadlinkRequest) (str
 
 // Release implements the HandleReleaser interface
 func (fn FileNode) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	logger.Errorf("BaseNode.release called for ino: %d", fn.ino)
+	logger.Debugf("BaseNode.release called for ino: %d", fn.ino)
 	fn.fs.mutex.Lock()
 	defer fn.fs.mutex.Unlock()
 	inode, err := GetINode(fn.fs, fn.ino)
@@ -1161,7 +1270,7 @@ func (fn FileNode) Release(ctx context.Context, req *fuse.ReleaseRequest) error 
 		return syscall.ENOENT
 	}
 
-	logger.Errorf("file.release: saving inode %d size %d  %d chunks", fn.ino, inode.Size, len(inode.Chunks))
+	logger.Debugf("file.release: saving inode %d size %d  %d chunks", fn.ino, inode.Size, len(inode.Chunks))
 
 	if err := FlushINode(fn.fs, inode); err != nil {
 		logger.Errorf("file.release: failed to save inode: %v", err)
@@ -1204,17 +1313,17 @@ func (h NodeHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fus
 }
 
 func (h NodeHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	logger.Errorf("NodeHandle.release called for ino: %d", h.ino)
+	logger.Debugf("NodeHandle.release called for ino: %d", h.ino)
 	fn := FileNode{BaseNode: BaseNode{fs: h.fs, ino: h.ino}}
 	return fn.Release(ctx, req)
 }
 
 func (h NodeHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
-	logger.Errorf("NodeHandle.flush called for ino: %d", h.ino)
+	logger.Debugf("NodeHandle.flush called for ino: %d", h.ino)
 	return nil
 }
 
 func (h NodeHandle) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
-	logger.Errorf("NodeHandle.fsync called for ino: %d", h.ino)
+	logger.Debugf("NodeHandle.fsync called for ino: %d", h.ino)
 	return nil
 }

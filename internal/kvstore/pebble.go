@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/cockroachdb/pebble"
@@ -13,13 +12,14 @@ import (
 
 // PKV is pebble based kvstore implementation
 type PKV struct {
-	db     *pebble.DB
-	closed bool
-	mutex  sync.RWMutex
+	db       *pebble.DB
+	closed   bool
+	mutex    sync.RWMutex
+	notifier Notifier
 }
 
 // GetPKVStore creates a new pebble store instance
-func NewPKVStore(dbPath string, readOnly bool) (KVStore, error) {
+func NewPKVStore(dbPath string, readOnly bool, notifier Notifier) (KVStore, error) {
 	logger.Debugf("initializing pebble kv store at path: %s", dbPath)
 
 	pebbleOpts := &pebble.Options{
@@ -64,8 +64,9 @@ func NewPKVStore(dbPath string, readOnly bool) (KVStore, error) {
 	logger.Info("pebble kv store initialized successfully")
 
 	return &PKV{
-		db:     db,
-		closed: false,
+		db:       db,
+		closed:   false,
+		notifier: notifier,
 	}, nil
 }
 
@@ -98,6 +99,10 @@ func (s *PKV) Get(key string, value interface{}) error {
 		return fmt.Errorf("get %s: unmarshal: %w", key, err)
 	}
 
+	if s.notifier != nil {
+		s.notifier("get", key, value)
+	}
+
 	logger.Debugf("successfully retrieved value for key: %s", key)
 	return nil
 }
@@ -124,7 +129,9 @@ func (s *PKV) Set(key string, value interface{}) error {
 		logger.Errorf("failed to write value for key %s: %v", key, err)
 		return fmt.Errorf("set %s: db write: %w", key, err)
 	}
-
+	if s.notifier != nil {
+		s.notifier("set", key, value)
+	}
 	logger.Debugf("successfully set value for key: %s", key)
 	return nil
 }
@@ -146,55 +153,15 @@ func (s *PKV) Del(key string) error {
 		return fmt.Errorf("delete %s: %w", key, err)
 	}
 
+	if s.notifier != nil {
+		s.notifier("del", key, nil)
+	}
 	logger.Debugf("successfully deleted key: %s", key)
 	return nil
 }
 
-// List lists all keys matching prefix
-func (s *PKV) List(prefix string) ([]string, error) {
-	if err := s.checkClosed(); err != nil {
-		logger.Debug("list operation failed: store closed")
-		return nil, fmt.Errorf("list %s: %w", prefix, err)
-	}
-
-	logger.Debugf("listing keys with prefix: %s", prefix)
-
-	var keys []string
-
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
-	iter, err := s.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(prefix),
-		UpperBound: getUpperBound([]byte(prefix)),
-	})
-	if err != nil {
-		logger.Errorf("failed to list keys with prefix %s: %v", prefix, err)
-		return nil, fmt.Errorf("list %s: create iterator: %w", prefix, err)
-	}
-	defer iter.Close()
-
-	prefixBytes := []byte(prefix)
-	for iter.SeekGE([]byte(prefix)); iter.Valid(); iter.Next() {
-		key := iter.Key()
-		if !bytes.HasPrefix(key, prefixBytes) {
-			break
-		}
-		keys = append(keys, string(key))
-	}
-
-	if err := iter.Error(); err != nil {
-		logger.Errorf("failed to list keys with prefix %s: %v", prefix, err)
-		return nil, fmt.Errorf("list %s: iteration: %w", prefix, err)
-	}
-
-	logger.Debugf("successfully listed %d keys with prefix: %s", len(keys), prefix)
-	return keys, nil
-}
-
 // Scan scans keys with given prefix, starting from startKey (inclusive), up to limit keys.
-// Returns the matched keys and the next key for pagination (empty if no more).
-// If startKey is empty, scanning starts from the first key with the prefix.
+// Uses snapshot for lock-free consistent reads.
 func (s *PKV) Scan(prefix, startKey string, limit int) ([]string, string, error) {
 	if err := s.checkClosed(); err != nil {
 		logger.Debug("scan operation failed: store closed")
@@ -207,19 +174,21 @@ func (s *PKV) Scan(prefix, startKey string, limit int) ([]string, string, error)
 
 	logger.Debugf("scanning keys with prefix: %s, startKey: %s, limit: %d", prefix, startKey, limit)
 
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.mutex.Lock()
+	// Create a snapshot for consistent, lock-free read
+	snap := s.db.NewSnapshot()
+	defer snap.Close() // Important: release snapshot resources
+	s.mutex.Unlock()
 
 	var keys []string
 	var nextKey string
 
-	// Determine the start key for iteration
 	start := []byte(prefix)
 	if startKey != "" && bytes.HasPrefix([]byte(startKey), []byte(prefix)) {
 		start = []byte(startKey)
 	}
 
-	iter, err := s.db.NewIter(&pebble.IterOptions{
+	iter, err := snap.NewIter(&pebble.IterOptions{
 		LowerBound: []byte(prefix),
 		UpperBound: getUpperBound([]byte(prefix)),
 	})
@@ -232,25 +201,20 @@ func (s *PKV) Scan(prefix, startKey string, limit int) ([]string, string, error)
 	prefixBytes := []byte(prefix)
 	count := 0
 
-	// Seek to start position and iterate
 	for iter.SeekGE(start); iter.Valid() && count < limit; iter.Next() {
 		key := iter.Key()
-
-		// Check if still in prefix range
 		if !bytes.HasPrefix(key, prefixBytes) {
 			break
 		}
-
-		keys = append(keys, string(key))
+		// Must copy key because Pebble reuses buffer
+		keys = append(keys, string(append([]byte(nil), key...)))
 		count++
 	}
 
-	// Get nextKey for pagination if there are more results
 	if iter.Valid() {
 		next := iter.Key()
-		// Only return nextKey if it's still in prefix range
 		if bytes.HasPrefix(next, prefixBytes) {
-			nextKey = string(next)
+			nextKey = string(append([]byte(nil), next...))
 		}
 	}
 
@@ -263,55 +227,88 @@ func (s *PKV) Scan(prefix, startKey string, limit int) ([]string, string, error)
 	return keys, nextKey, nil
 }
 
-// CreateSnapshot creates a snapshot of the kv store in a separate goroutine
-func (s *PKV) CreateSnapshot(path string) error {
-	// 首先检查store是否关闭，但不持有锁
+// CountByPrefix counts the number of keys matching the given prefix
+// Uses snapshot for lock-free consistent reads.
+func (s *PKV) CountByPrefix(prefix string) (int, error) {
 	if err := s.checkClosed(); err != nil {
-		logger.Debug("create snapshot operation failed: store closed")
-		return fmt.Errorf("create snapshot: %w", err)
+		logger.Debug("count operation failed: store closed")
+		return 0, fmt.Errorf("count %s: %w", prefix, err)
 	}
 
-	logger.Infof("starting snapshot creation for pebble kv store to path: %s", path)
+	logger.Debugf("counting keys with prefix: %s", prefix)
 
-	// 存储db引用，避免在goroutine中直接访问s.db（可能被修改）
-	var db *pebble.DB
-	s.mutex.RLock()
-	db = s.db
-	s.mutex.RUnlock()
+	s.mutex.Lock()
+	// Create a snapshot for consistent, lock-free read
+	snap := s.db.NewSnapshot()
+	defer snap.Close() // Important: release snapshot resources
+	s.mutex.Unlock()
 
-	// Create a channel to receive the snapshot result
-	done := make(chan error, 1)
+	iter, err := snap.NewIter(&pebble.IterOptions{
+		LowerBound: []byte(prefix),
+		UpperBound: getUpperBound([]byte(prefix)),
+	})
+	if err != nil {
+		logger.Errorf("failed to create iterator for count: %v", err)
+		return 0, fmt.Errorf("count %s: create iterator: %w", prefix, err)
+	}
+	defer iter.Close()
 
-	// Start a new goroutine to create the snapshot
-	go func(db *pebble.DB) {
-		// Create directory if it doesn't exist
-		if err := os.MkdirAll(path, 0755); err != nil {
-			logger.Errorf("failed to create snapshot directory: %v", err)
-			done <- fmt.Errorf("failed to create snapshot directory: %w", err)
-			return
+	count := 0
+	prefixBytes := []byte(prefix)
+
+	for iter.SeekGE([]byte(prefix)); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, prefixBytes) {
+			break
 		}
+		count++
+	}
 
-		snapshotPath := path + "/snapshot"
-		if err := os.MkdirAll(snapshotPath, 0755); err != nil {
-			logger.Errorf("failed to create snapshot subdirectory: %v", err)
-			done <- fmt.Errorf("failed to create snapshot subdirectory: %w", err)
-			return
+	if err := iter.Error(); err != nil {
+		logger.Errorf("failed to count keys with prefix %s: %v", prefix, err)
+		return 0, fmt.Errorf("count %s: iteration: %w", prefix, err)
+	}
+
+	logger.Debugf("counted %d keys with prefix: %s", count, prefix)
+	return count, nil
+}
+
+// List lists all keys matching prefix (lock-free via snapshot)
+func (s *PKV) List(prefix string) ([]string, error) {
+	if err := s.checkClosed(); err != nil {
+		return nil, fmt.Errorf("list %s: %w", prefix, err)
+	}
+
+	s.mutex.Lock()
+	// Create a snapshot for consistent, lock-free read
+	snap := s.db.NewSnapshot()
+	defer snap.Close() // Important: release snapshot resources
+	s.mutex.Unlock()
+
+	iter, err := snap.NewIter(&pebble.IterOptions{
+		LowerBound: []byte(prefix),
+		UpperBound: getUpperBound([]byte(prefix)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list %s: create iterator: %w", prefix, err)
+	}
+	defer iter.Close()
+
+	var keys []string
+	prefixBytes := []byte(prefix)
+	for iter.SeekGE([]byte(prefix)); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, prefixBytes) {
+			break
 		}
+		keys = append(keys, string(append([]byte(nil), key...)))
+	}
 
-		// For Pebble, we'll use the Checkpoint functionality
-		err := db.Checkpoint(snapshotPath, nil)
-		if err != nil {
-			logger.Errorf("failed to create pebble snapshot: %v", err)
-			done <- fmt.Errorf("failed to create pebble snapshot: %w", err)
-			return
-		}
+	if err := iter.Error(); err != nil {
+		return nil, fmt.Errorf("list %s: iteration: %w", prefix, err)
+	}
 
-		logger.Infof("snapshot created successfully at: %s", path)
-		done <- nil
-	}(db)
-
-	// Wait for the snapshot operation to complete
-	return <-done
+	return keys, nil
 }
 
 // Close closes the kv store
@@ -349,49 +346,6 @@ func (s *PKV) checkClosed() error {
 	}
 
 	return nil
-}
-
-// CountByPrefix counts the number of keys matching the given prefix
-func (s *PKV) CountByPrefix(prefix string) (int, error) {
-	if err := s.checkClosed(); err != nil {
-		logger.Debug("count operation failed: store closed")
-		return 0, fmt.Errorf("count %s: %w", prefix, err)
-	}
-
-	logger.Debugf("counting keys with prefix: %s", prefix)
-
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
-	iter, err := s.db.NewIter(&pebble.IterOptions{
-		LowerBound: []byte(prefix),
-		UpperBound: getUpperBound([]byte(prefix)),
-	})
-	if err != nil {
-		logger.Errorf("failed to create iterator for count: %v", err)
-		return 0, fmt.Errorf("count %s: create iterator: %w", prefix, err)
-	}
-	defer iter.Close()
-
-	count := 0
-	prefixBytes := []byte(prefix)
-
-	// Iterate and count matching keys
-	for iter.SeekGE([]byte(prefix)); iter.Valid(); iter.Next() {
-		key := iter.Key()
-		if !bytes.HasPrefix(key, prefixBytes) {
-			break
-		}
-		count++
-	}
-
-	if err := iter.Error(); err != nil {
-		logger.Errorf("failed to count keys with prefix %s: %v", prefix, err)
-		return 0, fmt.Errorf("count %s: iteration: %w", prefix, err)
-	}
-
-	logger.Debugf("counted %d keys with prefix: %s", count, prefix)
-	return count, nil
 }
 
 // getUpperBound returns the upper bound for prefix iteration

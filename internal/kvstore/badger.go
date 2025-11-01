@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
@@ -14,13 +13,14 @@ import (
 
 // BKV is badgerdb based kvstore implementation
 type BKV struct {
-	db     *badger.DB
-	closed bool
-	mutex  sync.RWMutex
+	db       *badger.DB
+	closed   bool
+	mutex    sync.RWMutex
+	notifier Notifier
 }
 
 // NewBKV creates a new badgerdb store instance
-func NewBKVStore(dbPath string, readOnly bool) (KVStore, error) {
+func NewBKVStore(dbPath string, readOnly bool, notifier Notifier) (KVStore, error) {
 	logger.Debugf("initializing badgerdb kv store at path: %s", dbPath)
 
 	opts := badger.DefaultOptions(dbPath)
@@ -61,8 +61,9 @@ func NewBKVStore(dbPath string, readOnly bool) (KVStore, error) {
 
 	logger.Info("badgerdb kv store initialized successfully")
 	return &BKV{
-		db:     db,
-		closed: false,
+		db:       db,
+		closed:   false,
+		notifier: notifier,
 	}, nil
 }
 
@@ -98,7 +99,9 @@ func (s *BKV) Get(key string, value interface{}) error {
 		}
 
 		logger.Debugf("successfully retrieved value for key: %s", key)
-
+		if s.notifier != nil {
+			s.notifier("get", key, value)
+		}
 		return nil
 	})
 }
@@ -123,9 +126,18 @@ func (s *BKV) Set(key string, value interface{}) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	return s.db.Update(func(txn *badger.Txn) error {
+	err = s.db.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte(key), data)
 	})
+
+	if err != nil {
+		logger.Errorf("failed to set value for key %s: %v", key, err)
+		return fmt.Errorf("failed to set value: %w", err)
+	}
+	if s.notifier != nil {
+		s.notifier("set", key, value)
+	}
+	return nil
 }
 
 // Del deletes specified key
@@ -140,9 +152,18 @@ func (s *BKV) Del(key string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	return s.db.Update(func(txn *badger.Txn) error {
+	err := s.db.Update(func(txn *badger.Txn) error {
 		return txn.Delete([]byte(key))
 	})
+	if err != nil {
+		logger.Errorf("failed to delete key %s: %v", key, err)
+		return fmt.Errorf("failed to delete key: %w", err)
+	}
+	if s.notifier != nil {
+		s.notifier("del", key, nil)
+	}
+	logger.Debugf("successfully deleted key: %s", key)
+	return nil
 }
 
 // List lists all keys matching prefix
@@ -274,7 +295,7 @@ func (s *BKV) CountByPrefix(prefix string) (int, error) {
 	err := s.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false // 只需要计算数量，不需要值
-		
+
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -293,57 +314,6 @@ func (s *BKV) CountByPrefix(prefix string) (int, error) {
 
 	logger.Debugf("counted %d keys with prefix: %s", count, prefix)
 	return count, nil
-}
-
-// CreateSnapshot creates a snapshot of the kv store in a separate goroutine
-func (s *BKV) CreateSnapshot(path string) error {
-	// 首先检查store是否关闭，但不持有锁
-	if err := s.checkClosed(); err != nil {
-		logger.Debug("create snapshot operation failed: store closed")
-		return err
-	}
-
-	logger.Infof("starting snapshot creation for badgerdb kv store to path: %s", path)
-
-	// 存储db引用，避免在goroutine中直接访问s.db（可能被修改）
-	var db *badger.DB
-	s.mutex.RLock()
-	db = s.db
-	s.mutex.RUnlock()
-
-	// Create a channel to receive the snapshot result
-	done := make(chan error, 1)
-
-	// Start a new goroutine to create the snapshot
-	go func(db *badger.DB) {
-		// Create directory if it doesn't exist
-		if err := os.MkdirAll(path, 0755); err != nil {
-			logger.Errorf("failed to create snapshot directory: %v", err)
-			done <- fmt.Errorf("failed to create snapshot directory: %w", err)
-			return
-		}
-
-		file, err := os.Create(path + "/snapshot.db")
-		if err != nil {
-			logger.Errorf("failed to create snapshot file: %v", err)
-			done <- fmt.Errorf("failed to create snapshot file: %w", err)
-			return
-		}
-		defer file.Close()
-
-		_, err = db.Backup(file, 0)
-		if err != nil {
-			logger.Errorf("failed to create badgerdb snapshot: %v", err)
-			done <- fmt.Errorf("failed to create badgerdb snapshot: %w", err)
-			return
-		}
-
-		logger.Infof("snapshot created successfully at: %s", path)
-		done <- nil
-	}(db)
-
-	// Wait for the snapshot operation to complete
-	return <-done
 }
 
 // Close closes the kv store

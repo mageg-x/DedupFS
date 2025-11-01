@@ -1,8 +1,6 @@
-<div align="left">
-  <a href="./README.md">English</a> | <a href="./README_ZH.md">中文</a>
-</div>
-
 # DedupFS - 去重文件系统
+
+[English](./README.md) | [中文](./README_ZH.md)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 ![Go](https://img.shields.io/badge/go-1.20%2B-blue.svg)
@@ -15,7 +13,7 @@ DedupFS 是一个创新的去重压缩文件系统，通过在用户空间透明
 ## 核心价值
 
 - **双重去重策略**：独特的文件内chunk去重与全局文件间去重相结合，全面消除冗余数据
-- **存储效率革命**：通过先进的内容分块和相似性聚合技术，实现 3-5 倍的存储空间节省
+- **存储效率革命**：通过先进的内容分块和相似性聚合技术，实现 几十 倍的存储空间节省
 - **性能与效率平衡**：在保证去重效果的同时，最小化对 I/O 性能的影响
 - **完全透明使用**：提供标准的 POSIX 文件系统接口，现有应用无需任何修改
 - **数据安全保障**：内置完整性校验和事务保护，确保数据安全可靠
@@ -91,7 +89,7 @@ func (ce *CompressionEngine) CompressBlocks(similarChunks []*Chunk) *CompressedB
 type CacheManager struct {
     chunkCache    *LRUCache[ChunkHash, []byte]    // 热点数据块缓存
     blockCache    *LRUCache[BlockId, []byte]      // 解压块缓存
-    inodeCache *Cache[ino, INode] // Inode缓存
+    inodeCache    *Cache[ino, INode]              // Inode缓存
 }
 ```
 
@@ -199,6 +197,9 @@ go build -o dedupfs main.go
 ### 基础使用
 
 ```bash
+# 启动服务器
+./dedupfs server start
+
 # 挂载去重文件系统（所有参数通过命令行）
 ./dedupfs mount /mnt/dfs data/ --min-size=1048576 --avg-size=2097152 --max-size=4194304 --compress=true
 
@@ -211,6 +212,9 @@ ls -lh /mnt/dfs/
 
 # 卸载文件系统
 ./dedupfs unmount /mnt/dfs
+
+# 停止服务器
+./dedupfs server stop
 
 # 调试命令
 # 调试块信息
@@ -231,14 +235,49 @@ ls -lh /mnt/dfs/
 ```
 
 常用参数：
-- `--avg-size`:       平均块大小（字节），默认 2097152
-- `--max-size`:      最大块大小（字节），默认 4194304
-- `--min-size`:      最小块大小（字节），默认 1048576
-- `--block-size`:    块大小（字节），默认 67108864
+- `--avg-size`:       平均块大小（字节），默认 2097152 (2MB)
+- `--max-size`:      最大块大小（字节），默认 4194304 (4MB)
+- `--min-size`:      最小块大小（字节），默认 1048576 (1MB)
+- `--block-size`:    块大小（字节），默认 67108864 (64MB)
 - `--fixed-size`:    使用固定大小块（默认 false）
 - `--compress`:      启用压缩（默认 true）
 - `--encrypt`:       启用加密（默认 false）
 - ` --password`:    加密密码（默认空字符串）
+
+### 日志级别控制
+
+DedupFS 支持通过 verbose 标志控制日志详细程度：
+
+```bash
+# 基本日志信息（警告和错误）
+./dedupfs command
+
+# 增加详细程度：显示基本操作信息
+./dedupfs -v command
+
+# 更详细：显示性能统计和调试信息
+./dedupfs -vv command
+
+# 最详细：显示所有内部操作和原始数据
+./dedupfs -vvv command
+
+# 调试级别：显示所有可能的日志信息
+./dedupfs -vvvv command
+```
+
+### 服务器管理
+
+DedupFS 采用服务器-客户端架构，服务器进程负责实际的数据处理，客户端命令通过 IPC 与服务器通信：
+
+```bash
+# 启动 DedupFS 服务器
+./dedupfs server start
+
+# 停止 DedupFS 服务器
+./dedupfs server stop
+```
+
+服务器会自动清理不再使用的资源，确保存储效率。所有挂载、卸载、统计和调试操作都通过服务器执行，提供一致的用户体验。
 
 ### 调试工具
 
@@ -252,9 +291,9 @@ DedupFS 包含强大的调试工具，用于检查内部结构：
 
 #### Inode 调试
 
-`debug inode` 命令提供有关文件 inode、它们的数据块和元数据的详细信息。
-
 ![Inode 调试界面](inode.png)
+
+`debug inode` 命令提供有关文件 inode、它们的数据块和元数据的详细信息。
 
 这两种调试界面都具有：
 - 交互式数据块浏览
@@ -282,6 +321,21 @@ DedupFS 包含强大的调试工具，用于检查内部结构：
 | 小文件随机读 | 380 MB/s | 340 MB/s | 11% |
 | 元数据操作 | 85k ops/s | 72k ops/s | 15% |
 
+## 与 ZFS 对比优势
+
+| 维度 | **DedupFS（基于 FUSE + Pebble）** | **ZFS（含 dedup 功能）** | **DedupFS 优势说明** |
+|------|------------------------------------------|--------------------------|----------------------|
+| **去重粒度** | ✅ **细粒度**（支持固定/可变长分块，如 4KB–64KB） | ⚠️ **粗粒度**（按 recordsize，默认 128KB） | 对相似文件（如日志、VM 镜像、文档版本）去重效率更高；ZFS 可能因单字节差异导致整块无法去重 |
+| **内存开销** | ✅ **低且可控**（指纹索引存于 Pebble），可落盘，内存占用 ≈ 几百 MB） | ❌ **极高**（dedup 表 DDT 必须常驻内存，1TB 数据 ≈ 5–10GB RAM） | DedupFS 可在低内存设备（如 NAS、树莓派）运行；ZFS dedup 在内存不足时性能崩溃 |
+| **是否需要内核模块** | ❌ **否**（仅依赖标准 FUSE 接口） | ✅ **是**（需加载 `zfs.ko` 等内核模块） | DedupFS 普通用户即可部署，无需 root；ZFS 需系统管理员权限 |
+| **部署复杂度** | ✅ **极低**（单二进制文件 + FUSE） | ⚠️ **中高**（需安装 zfsutils、创建 zpool、格式化） | DedupFS 适合桌面、边缘、容器环境；ZFS 适合专用存储服务器 |
+| **跨平台支持** | ✅ **Linux / macOS / Windows（via WinFsp）** | ❌ **仅 Linux / FreeBSD** | DedupFS 可作为通用备份/同步工具；ZFS 无法用于 macOS 或普通 Windows 用户 |
+| **去重策略灵活性** | ✅ **高度可定制**（可变长分块、内容感知、加密兼容设计） | ❌ **固定策略**（仅基于 record 哈希，无法感知内容） | DedupFS 可优化特定 workload（如数据库备份、视频帧）；ZFS 无法适配应用逻辑 |
+| **与应用集成能力** | ✅ **强**（可嵌入备份工具、云客户端、CLI 工具） | ❌ **弱**（仅作为底层存储，无法暴露去重元数据） | DedupFS 可实现“只传新 chunk”、“带版本快照”等高级功能；ZFS 无法提供 chunk 级 API |
+| **备份与恢复** | ✅ **内置流式备份**Pebble） `Backup()` 支持增量、单文件） | ⚠️ **依赖快照 + 手动复制**（无应用级一致性保证） | DedupFS 可直接导出逻辑备份；ZFS 快照是物理级，无法跨平台恢复 |
+| **加密兼容性** | ✅ **支持“先分块后加密”**（保留去重能力） | ❌ **不兼容**（若先加密，ZFS 无法去重） | DedupFS 可实现 **安全 + 去重** 兼得；ZFS dedup 与加密互斥 |
+| **适用数据规模** | ✅ **从小文件到 PB 级**（索引可落盘） | ⚠️ **仅适合小规模**（受内存限制，>10TB 风险高） | DedupFS 更适合长期增长的备份仓库；ZFS dedup 在大数据量下不可持续 |
+| **开发与调试** | ✅ **用户态，崩溃不影响系统** | ❌ **内核态，bug 可能导致 panic** | DedupFS 更安全、易迭代；ZFS 调试需内核知识 |
 ## 技术优势
 
 ### 🔬 内容感知技术
@@ -324,6 +378,7 @@ DedupFS 提供全面的命令行接口，用于所有操作。所有参数都通
 - `unmount`: 卸载文件系统
 - `stats`: 显示去重统计信息
 - `debug`: 高级调试工具（block、inode）
+- `server`: 服务器管理（start、stop）
 ```
 
 ## 常见问题
@@ -340,31 +395,36 @@ DedupFS 采用多层次的完整性保护：
 在典型工作负载下：
 - 写入性能降低 20-30%，换取 60-80% 存储节省
 - 读取性能影响小于 15%，热点数据接近原生性能
-- 内存开销约 1-2GB，可根据系统配置调整
+- 内存开销约 100MB，可根据系统配置调整
 
 ### ❓ 支持哪些使用场景？
 
 特别适合：
-- 开发环境和构建系统
-- 虚拟机镜像和容器存储
-- 备份和归档系统
-- 代码仓库和文档管理
+- 备份数据，备份数据存在大量相似性，重复率达到 90%以上。非常适合用dedupfs进行备份
+- 存储数据，系统镜像，虚拟机镜像，docker 镜像， 数据库原始数据，代码仓库 和 文本类型文档。这些数据存在巨大的压缩率和内容去重率
+- 增量数据处理，当年还在发愁如何增量备份，自己设计版本号管理数据时候。dedupfs可以轻松解决。你方向全量复制数据，dedupfs底层已经帮你把重复数据去重了，不会额外占用任何存储空间
 
-不适合：
-- 高性能数据库原始数据
-- 实时音视频处理
-- 已加密的随机数据
+
 
 ## 开始使用
 
 DedupFS 让存储效率提升变得简单直接。只需使用您首选的命令行参数挂载文件系统，即可享受智能去重和压缩带来的存储空间节省。
 
 ```bash
-# 立即体验
-./dedupfs mount /path/to/mountpoint  /path/to/data
+# 启动服务器
+./dedupfs server start
+
+# 挂载文件系统
+./dedupfs mount /path/to/mountpoint /path/to/data
+
 # 使用调试工具检查内部结构
-./dedupfs debug  /path/to/mountpoint block blockID
-./dedupfs debug  /path/to/mountpoint inode file.txt
+./dedupfs debug /path/to/mountpoint block blockID
+./dedupfs debug /path/to/mountpoint inode file.txt
+
+# 完成后卸载并停止服务器
+./dedupfs unmount /path/to/mountpoint
+./dedupfs server stop
+
 # 开始享受智能存储优化！
 ```
 
