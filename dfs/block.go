@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	G_BLOCK_CACHE = cache.NewCache[string, *Block](1024*1024*1024, true)
+	G_BLOCK_CACHE = cache.NewCache[*Block](1024*1024*1024, true)
 	CURRENT_BLOCK = sync.Map{}
 )
 
@@ -327,7 +327,7 @@ func ReadBlockMeta(blockID string, dataDir string) (*Block, error) {
 
 	block, err := DeserializeBlock(data)
 	if err != nil {
-		logger.Errorf("failed to deserialize block: %v", err)
+		logger.Errorf("failed to deserialize block  %v", blockID, err)
 		return nil, fmt.Errorf("deserial block failed %w", err)
 	}
 	return block, nil
@@ -337,8 +337,8 @@ func ReadBlockMeta(blockID string, dataDir string) (*Block, error) {
 func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 	logger.Debugf("reading block %s for filesystem %s", blockID, fs.ID)
 
-	cacheKey := "block:" + fs.ID + ":" + blockID
-	if block, ok := G_BLOCK_CACHE.Get(cacheKey); ok && block != nil {
+	blockKey := "block:" + fs.ID + ":" + blockID
+	if block, ok := G_BLOCK_CACHE.Get(blockKey); ok && block != nil {
 		logger.Debugf("block %s found in cache", blockID)
 		return block, nil
 	}
@@ -361,7 +361,7 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 
 	block, err := DeserializeBlock(data)
 	if err != nil {
-		logger.Errorf("failed to deserialize block: %v", err)
+		logger.Errorf("failed to deserialize block  %v", block.Header.ID, err)
 		return nil, fmt.Errorf("deserial block failed %w", err)
 	}
 
@@ -389,7 +389,7 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 		}
 	}
 
-	G_BLOCK_CACHE.Put(cacheKey, block)
+	G_BLOCK_CACHE.Put(blockKey, block)
 	logger.Debugf("block %s successfully read and cached, contains %d chunks", blockID, len(block.Header.ChunkList))
 	return block, nil
 }
@@ -403,8 +403,8 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 
 	// block 为 nil 时候，缺省是 current block
 	if block == nil {
-		key := fmt.Sprintf("block:%s", fs.ID)
-		if b, ok := CURRENT_BLOCK.Load(key); ok && b != nil {
+		blockKey := fmt.Sprintf("block:%s", fs.ID)
+		if b, ok := CURRENT_BLOCK.Load(blockKey); ok && b != nil {
 			if curBlock, yes := b.(*Block); yes && curBlock != nil {
 				block = curBlock
 			}
@@ -430,25 +430,6 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 	if block.Header.TotalSize != int64(len(block.Data)) {
 		logger.Errorf("size mismatch: total_size=%d != data_len=%d", block.Header.TotalSize, len(block.Data))
 		return fmt.Errorf("total_size=%d != data_len=%d", block.Header.TotalSize, len(block.Data))
-	}
-
-	data, err := SerializeBlock(block)
-	if err != nil || data == nil {
-		logger.Errorf("failed to serialize block: %v", err)
-		return fmt.Errorf("serialize block failed %w", &err)
-	}
-
-	blockPath := filepath.Join(fs.DataDir, GetBlockPath(block.Header.ID))
-	logger.Debugf("block save path: %s", blockPath)
-	if err := os.MkdirAll(filepath.Dir(blockPath), 0755); err != nil {
-		logger.Errorf("failed to create directory: %v", err)
-		return fmt.Errorf("failed to create dir: %w", err)
-	}
-
-	mfs := memfs.GetInstance()
-	if mfs == nil {
-		logger.Errorf("memfs not initialized")
-		return fmt.Errorf("memfs not initialized")
 	}
 
 	// 下面这些耗时的操作，放在 后面处理
@@ -502,14 +483,32 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 		},
 	}
 
+	// 写磁盘数据
+	blockPath := filepath.Join(fs.DataDir, GetBlockPath(block.Header.ID))
+	logger.Debugf("block save path: %s", blockPath)
+	if err := os.MkdirAll(filepath.Dir(blockPath), 0755); err != nil {
+		logger.Errorf("failed to create directory: %v", err)
+		return fmt.Errorf("failed to create dir: %w", err)
+	}
+
+	mfs := memfs.GetInstance()
+	if mfs == nil {
+		logger.Errorf("memfs not initialized")
+		return fmt.Errorf("memfs not initialized")
+	}
+	data, err := SerializeBlock(block)
+	if err != nil || data == nil {
+		logger.Errorf("failed to serialize block  %v", block.Header.ID, err)
+		return fmt.Errorf("serialize block failed %w", &err)
+	}
 	if err := mfs.Write(blockPath, data, processor); err != nil {
 		logger.Errorf("failed to write block to memfs: %v", err)
 		return fmt.Errorf("memfs write block failed %w", err)
 	}
 	logger.Debugf("block %s successfully saved", block.Header.ID)
 
-	cacheKey := "block:" + fs.ID + ":" + block.Header.ID
-	G_BLOCK_CACHE.Put(cacheKey, block)
+	_blockKey := "block:" + fs.ID + ":" + block.Header.ID
+	G_BLOCK_CACHE.Put(_blockKey, block)
 	return nil
 }
 
@@ -517,18 +516,19 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 	logger.Debugf("removing chunk %s from block %s in filesystem %s", chunk.Hash, chunk.BlockID, fs.ID)
 
 	// current block 清理
-	key := fmt.Sprintf("block:%s", fs.ID)
-	if b, ok := CURRENT_BLOCK.Load(key); ok && b != nil {
+	blockKey := fmt.Sprintf("block:%s", fs.ID)
+	if b, ok := CURRENT_BLOCK.Load(blockKey); ok && b != nil {
 		if curBlock, yes := b.(*Block); yes && curBlock != nil {
 			if err := curBlock.RemoveChunk(chunk); err != nil {
-				logger.Errorf("failed to remove chunk from current block: %v", err)
+				logger.Errorf("failed to remove chunk from current block %v", err)
 				return fmt.Errorf("remove chunk from current block failed %w", err)
 			} else {
 				if len(curBlock.Header.ChunkList) == 0 {
 					logger.Errorf("current block %s is empty, removing it", curBlock.Header.ID)
-					CURRENT_BLOCK.Store(key, nil)
+					CURRENT_BLOCK.Store(blockKey, nil)
+				} else {
+					CURRENT_BLOCK.Store(blockKey, curBlock)
 				}
-				CURRENT_BLOCK.Store(key, curBlock)
 			}
 		} else {
 			logger.Errorf("invalid block type: %T", b)
@@ -543,13 +543,14 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 	}
 
 	if err := block.RemoveChunk(chunk); err != nil {
-		logger.Errorf("failed to remove chunk from block: %v", err)
+		logger.Errorf("failed to remove chunk from  %v", block.Header.ID, err)
 		return fmt.Errorf("remove chunk from block failed %w", err)
 	} else {
+		_blockKey := "block:" + fs.ID + ":" + block.Header.ID
 		if len(block.Header.ChunkList) == 0 {
 			// 删除 block 文件
 			blockPath := filepath.Join(fs.DataDir, GetBlockPath(chunk.BlockID))
-			logger.Errorf("removing block %s from memfs", blockPath)
+			logger.Debugf("removing block %s from memfs", blockPath)
 			mfs := memfs.GetInstance()
 			if mfs == nil {
 				logger.Errorf("memfs not initialized")
@@ -560,14 +561,14 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 				return fmt.Errorf("memfs remove block failed %w", err)
 			}
 
-			cacheKey := "block:" + fs.ID + ":" + block.Header.ID
-			G_BLOCK_CACHE.Del(cacheKey)
+			G_BLOCK_CACHE.Del(_blockKey)
 			return nil
 		} else {
-			if err := SaveBlock(block, fs); err != nil {
-				logger.Errorf("failed to save block after removing chunk: %v", err)
-				return fmt.Errorf("save block failed %w", err)
-			}
+			// if err := SaveBlock(block, fs); err != nil {
+			// 	logger.Errorf("failed to save block after removing chunk: %v", err)
+			// 	return fmt.Errorf("save block failed %w", err)
+			// }
+			G_BLOCK_CACHE.Put(_blockKey, block)
 			logger.Debugf("successfully removed chunk %s from block %s", chunk.Hash, chunk.BlockID)
 			return nil
 		}
@@ -576,12 +577,12 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 
 func AddChunkToBlock(chunk *Chunk, fs *DedupFS) error {
 	// 先获取 current block
-	key := fmt.Sprintf("block:%s", fs.ID)
-	_b, ok := CURRENT_BLOCK.Load(key)
+	blockKey := fmt.Sprintf("block:%s", fs.ID)
+	_b, ok := CURRENT_BLOCK.Load(blockKey)
 	if !ok || _b == nil {
 		logger.Debugf("no current block found for filesystem %s, creating a new one", fs.ID)
 		if b, err := NewBlock(); err != nil || b == nil {
-			logger.Errorf("failed to create new block: %v", err)
+			logger.Errorf("failed to create new block %v", err)
 			return fmt.Errorf("create new block failed %w", err)
 		} else {
 			_b = b
@@ -603,14 +604,20 @@ func AddChunkToBlock(chunk *Chunk, fs *DedupFS) error {
 			return fmt.Errorf("failed to save block %s: %w", block.Header.ID, err)
 		} else {
 			logger.Info("block %s size %d:%d successfully saved", block.Header.ID, len(block.Data), block.Header.TotalSize)
-			CURRENT_BLOCK.Store(key, nil)
+			CURRENT_BLOCK.Store(blockKey, nil)
 		}
 	} else {
-		CURRENT_BLOCK.Store(key, block)
+		CURRENT_BLOCK.Store(blockKey, block)
 	}
 
-	cacheKey := "block:" + fs.ID + ":" + block.Header.ID
-	G_BLOCK_CACHE.Put(cacheKey, block)
+	_blockKey := "block:" + fs.ID + ":" + block.Header.ID
+	G_BLOCK_CACHE.Put(_blockKey, block)
 
 	return nil
+}
+
+func ClearBlockCache(fs *DedupFS) {
+	keyPrefix := fmt.Sprintf("block:%s", fs.ID)
+	G_BLOCK_CACHE.Clear(keyPrefix + ":")
+	CURRENT_BLOCK.Store(keyPrefix, nil)
 }

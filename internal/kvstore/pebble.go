@@ -348,6 +348,14 @@ func (s *PKV) checkClosed() error {
 	return nil
 }
 
+func (s *PKV) ClearAll() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	start := []byte("")
+	end := bytes.Repeat([]byte{0xFF}, 64)
+	return s.db.DeleteRange(start, end, pebble.Sync)
+}
+
 // getUpperBound returns the upper bound for prefix iteration
 // This is a safer version of the original incrementBytes function
 func getUpperBound(prefix []byte) []byte {

@@ -203,6 +203,7 @@ func Unmount(mountPoint string) error {
 	if fs != nil && fs.Timer != nil {
 		fs.Timer.Stop()
 	}
+	fs.ClearAll()
 	delete(MountMap, mountPoint)
 	logger.Debugf("removed %s from mounted directories list", mountPoint)
 

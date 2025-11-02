@@ -316,6 +316,12 @@ func (s *BKV) CountByPrefix(prefix string) (int, error) {
 	return count, nil
 }
 
+func (s *BKV) ClearAll() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.db.DropAll()
+}
+
 // Close closes the kv store
 func (s *BKV) Close() error {
 	s.mutex.Lock()

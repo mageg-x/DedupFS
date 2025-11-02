@@ -212,7 +212,6 @@ func (m *MemFs) Remove(path string) error {
 
 				// 成功删除，继续向上
 				dir = filepath.Dir(dir)
-				return nil
 			}
 		}
 

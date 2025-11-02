@@ -1,17 +1,15 @@
 package dfs
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/mageg-x/dedupfs/internal/cache"
-	"github.com/mageg-x/dedupfs/internal/kvstore"
 )
 
 var (
-	G_INODE_CACHE = cache.NewCache[string, *INode](1024*1024*1024, false)
+	G_INODE_CACHE = cache.NewCache[*INode](1024*1024*1024, false)
 )
 
 // FileType 定义文件类型
@@ -202,6 +200,7 @@ func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
 						logger.Errorf("failed to get chunk data for hash %s: %v", lastChunk.Hash, err)
 						return fmt.Errorf("failed to get chunk data")
 					} else {
+						logger.Debugf("loaded last chunk hash %s, size %d", lastChunk.Hash, len(chunkData.Data))
 						n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: lastChunk.Hash})
 						lastChunk.Hash = ""
 						lastChunk.Data = chunkData.Data
@@ -435,8 +434,8 @@ func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
 
 UPDATA_CACHE_LABLE:
 	if err := CacheINode(fs, n); err != nil {
-		logger.Errorf("file.write: failed to cache inode: %v", err)
-		return fmt.Errorf("file.write: failed to cache inode: %v", err)
+		logger.Errorf("file.write: failed to cache inode %s  %v", n.Name, err)
+		return fmt.Errorf("file.write: failed to cache inode %v", err)
 	}
 	logger.Debugf("write completed for inode %d, file size: %d, chunks: %d", n.Ino, n.Size, len(n.Chunks))
 	return nil
@@ -488,13 +487,13 @@ func (n *INode) Truncate(fs *DedupFS, size uint64) error {
 
 				truncatedData := chunkData.Data[:bytesToKeep]
 				chunksToKeep = append(chunksToKeep, &INodeChunk{
-					Data: truncatedData, // 或 []byte{}，根据你的设计
+					Data: truncatedData,
 				})
 				currentOffset = size
+				n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: chunk.Hash})
 				break
 			} else {
-				// chunk 完全在截断点之后，停止处理
-				break
+				n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: chunk.Hash})
 			}
 		}
 
@@ -502,21 +501,31 @@ func (n *INode) Truncate(fs *DedupFS, size uint64) error {
 	} else {
 		// 情况2: 扩展文件（增大）
 		zeroBytesNeeded := size - n.Size
+		zeroData := make([]byte, zeroBytesNeeded)
 
 		if len(n.Chunks) > 0 {
 			lastChunk := n.Chunks[len(n.Chunks)-1]
 
-			// 优先尝试扩展最后一个 chunk（如果它已有内存数据）
 			if len(lastChunk.Data) > 0 {
-				// 在内存中扩展（避免重新加载）
-				lastChunk.Data = append(lastChunk.Data, make([]byte, zeroBytesNeeded)...)
+				n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: lastChunk.Hash})
+				lastChunk.Data = append(lastChunk.Data, zeroData...)
 				lastChunk.Hash = ""
 			} else {
-				// 最后一个 chunk 无内存数据，需新建一个全零 chunk
-				zeroData := make([]byte, zeroBytesNeeded)
-				n.Chunks = append(n.Chunks, &INodeChunk{
-					Data: zeroData,
-				})
+				c, err := GetChunkMeta(lastChunk.Hash, fs)
+				if err != nil || c == nil {
+					logger.Errorf("failed to get chunk meta for hash %s: %v", lastChunk.Hash, err)
+					return fmt.Errorf("failed to get chunk meta")
+				}
+				if c.Size > int32(fs.BlockConf.Size) {
+					n.Chunks = append(n.Chunks, &INodeChunk{
+						Data: zeroData,
+					})
+				} else {
+					n.DropChunks = append(n.DropChunks, &INodeChunk{Hash: c.Hash})
+					lastChunk.Data = append(c.Data, zeroData...)
+					lastChunk.Hash = ""
+				}
+
 			}
 		} else {
 			// 文件为空，直接创建新 chunk
@@ -534,8 +543,8 @@ func (n *INode) Truncate(fs *DedupFS, size uint64) error {
 	n.Ctime = now
 
 	if err := CacheINode(fs, n); err != nil {
-		logger.Errorf("file.write: failed to cache inode: %v", err)
-		return fmt.Errorf("file.write: failed to cache inode: %v", err)
+		logger.Errorf("file.write: failed to cache inode %s %v", n.Name, err)
+		return fmt.Errorf("file.write: failed to cache inode %v", err)
 	}
 
 	logger.Debugf("truncate completed for inode %d, new size: %d, chunks count: %d", n.Ino, n.Size, len(n.Chunks))
@@ -614,7 +623,7 @@ func (n *INode) RemoveXattr(name string) error {
 }
 
 func CreateINode(ino, pino uint64, kind FileType, name string, mode uint16) *INode {
-	logger.Debugf("creating new inode: ino=%d, parent=%d, kind=%s, name=%s, mode=%o",
+	logger.Debugf("creating new inode ino=%d, parent=%d, kind=%s, name=%s, mode=%o",
 		ino, pino, kind, name, mode)
 	now := time.Now().UTC()
 	inode := &INode{
@@ -645,8 +654,8 @@ func CacheINode(fs *DedupFS, inode *INode) error {
 		return fmt.Errorf("invalid param for cache node")
 	}
 
-	key := fmt.Sprintf("inode:%d", inode.Ino)
-	G_INODE_CACHE.Put(key, inode)
+	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
+	G_INODE_CACHE.Put(inodeKey, inode)
 
 	if len(inode.Chunks) > 0 {
 		// 如果chunks 的数据 大于 64M， 则将chunks数据缓存到磁盘中
@@ -667,7 +676,7 @@ func CacheINode(fs *DedupFS, inode *INode) error {
 
 func SaveINode(fs *DedupFS, inode *INode) error {
 	logger.Debugf("saving inode %d (name=%s, kind=%s, chunks=%d, size=%d) to filesystem %s", inode.Ino, inode.Name, inode.Kind, len(inode.Chunks), inode.Size, fs.ID)
-	key := fmt.Sprintf("inode:%d", inode.Ino)
+
 	if len(inode.Chunks) > 0 {
 		savaChunks := make([]*Chunk, 0)
 		newChunks := make([]*INodeChunk, 0, len(inode.Chunks))
@@ -715,70 +724,22 @@ func SaveINode(fs *DedupFS, inode *INode) error {
 			}
 		}
 	}
-
-	// 从kv_store 获取已有的 inode ， 放到 old_inode 中
-	var old_inode INode
-	if err := fs.KVStore.Get(key, &old_inode); err != nil {
-		if !errors.Is(err, kvstore.ErrKeyNotFound) {
-			logger.Errorf("failed to get inode %d: %v", inode.Ino, err)
-			return err
+	// 废弃的chunks
+	for _, dropChunk := range inode.DropChunks {
+		if err := RemoveChunk(dropChunk.Hash, fs); err != nil {
+			logger.Errorf("failed to remove chunk %s: %v", dropChunk.Hash, err)
+			return fmt.Errorf("failed to remove chunk %s: %w", dropChunk.Hash, err)
 		}
-	} else {
-		logger.Debugf("inode %d chunks %d:%d", inode.Ino, len(old_inode.Chunks), len(inode.Chunks))
-
-		// 统计新分片中每个哈希的出现次数
-		newHashCount := make(map[string]int, len(inode.Chunks))
-		for _, c := range inode.Chunks {
-			if c.Hash != "" {
-				newHashCount[c.Hash]++
-			} else {
-				logger.Errorf("chunk data is empty of node %s  %d", inode.Name, inode.Ino)
-			}
-		}
-		// 废弃的chunks
-		for _, dropChunk := range inode.DropChunks {
-			if dropChunk.Hash != "" && newHashCount[dropChunk.Hash] > 0 {
-				newHashCount[dropChunk.Hash]--
-			} else {
-				logger.Errorf("chunk %#v is empty of node %s  %d", dropChunk, inode.Name, inode.Ino)
-			}
-		}
-
-		// 统计旧分片中每个哈希的出现次数
-		oldHashCount := make(map[string]int, len(old_inode.Chunks))
-		for _, oldChunk := range old_inode.Chunks {
-			if oldChunk.Hash != "" {
-				oldHashCount[oldChunk.Hash]++
-			} else {
-				logger.Errorf("chunk data is empty of node %s  %d", inode.Name, inode.Ino)
-			}
-		}
-
-		// 找出需要删除的分块：旧计数 - 新计数 > 0 的部分
-		for hash, oldCount := range oldHashCount {
-			newCount := newHashCount[hash] // 如果不存在，newCount为0
-			deleteCount := oldCount - newCount
-
-			if deleteCount > 0 {
-				logger.Debugf("removing %d chunk %s from filesystem %s", deleteCount, hash, fs.ID)
-				for i := 0; i < deleteCount; i++ {
-					if err := RemoveChunk(hash, fs); err != nil {
-						logger.Errorf("failed to remove chunk %s: %v", hash, err)
-						return fmt.Errorf("failed to remove chunk %s: %w", hash, err)
-					}
-				}
-			}
-		}
-
-		inode.DropChunks = []*INodeChunk{}
 	}
+	inode.DropChunks = []*INodeChunk{}
 
-	if err := fs.KVStore.Set(key, inode); err != nil {
+	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
+	if err := fs.KVStore.Set(inodeKey, inode); err != nil {
 		logger.Errorf("failed to save inode %d: %v", inode.Ino, err)
 		return err
 	}
 
-	G_INODE_CACHE.Put(key, inode)
+	G_INODE_CACHE.Put(inodeKey, inode)
 	logger.Debugf("inode %d saved successfully", inode.Ino)
 	return nil
 }
@@ -797,13 +758,13 @@ func FlushINode(fs *DedupFS, inode *INode) error {
 
 func GetINode(fs *DedupFS, ino uint64) (*INode, error) {
 	logger.Debugf("getting inode %d from filesystem %s", ino, fs.ID)
-	key := fmt.Sprintf("inode:%d", ino)
-	if inode, exists := G_INODE_CACHE.Get(key); exists && inode != nil {
+	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
+	if inode, exists := G_INODE_CACHE.Get(inodeKey); exists && inode != nil {
 		logger.Debugf("inode %d name %s size %d found in cache", inode.Ino, inode.Name, inode.Size)
 		return inode, nil
 	}
 	var inode *INode
-	err := fs.KVStore.Get(key, &inode)
+	err := fs.KVStore.Get(inodeKey, &inode)
 	if err != nil {
 		logger.Errorf("failed to get inode %d: %v", ino, err)
 		return nil, err
@@ -830,14 +791,27 @@ func DelINode(fs *DedupFS, ino uint64) error {
 		}
 	}
 
-	key := fmt.Sprintf("inode:%d", ino)
-	G_INODE_CACHE.Del(key)
+	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
+	G_INODE_CACHE.Del(inodeKey)
 
-	err := fs.KVStore.Del(key)
+	err := fs.KVStore.Del(inodeKey)
 	if err != nil {
 		logger.Errorf("failed to delete inode %d: %v", ino, err)
 		return err
 	}
 	logger.Debugf("inode %d deleted successfully", ino)
+
+	// 判断释放全部Cache 空间
+	if root, ok := fs.RootNode.Get(1); ok && root != nil && root.ID == 1 {
+		if len(root.Children) == 0 {
+			fs.ClearAll()
+		}
+	}
+
 	return nil
+}
+
+func ClearINodeCache(fs *DedupFS) {
+	keyPrefix := fmt.Sprintf("inode:%s:", fs.ID)
+	G_INODE_CACHE.Clear(keyPrefix)
 }

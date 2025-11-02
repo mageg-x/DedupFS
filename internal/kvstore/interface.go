@@ -33,6 +33,8 @@ type KVStore interface {
 	Scan(prefix, startKey string, limit int) (keys []string, nextKey string, err error)
 	// CountByPrefix counts the number of keys matching the given prefix
 	CountByPrefix(prefix string) (int, error)
+	// ClearAll clears all keys from the kv store
+	ClearAll() error
 	// Close closes the kv store
 	Close() error
 }

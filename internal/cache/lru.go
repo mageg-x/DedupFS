@@ -2,6 +2,7 @@ package cache
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,27 +29,27 @@ type entry[V CacheItem] struct {
 }
 
 // Cache 是一个可配置的缓存，支持 LRU 驱逐或普通 map 模式
-type Cache[K comparable, V CacheItem] struct {
+type Cache[V CacheItem] struct {
 	capacity    int
 	autotrim    bool          // 是否自动裁剪（启用淘汰策略）
 	currentSize atomic.Uint64 // 当前总大小（单位与 Len() 一致）
 	mu          sync.RWMutex
-	data        map[K]*entry[V] // 使用普通 map + RWMutex 实现线程安全
+	data        map[string]*entry[V] // 使用普通 map + RWMutex 实现线程安全，key固定为string类型
 }
 
 // NewCache 创建新缓存
 // capacity: 缓存容量
 // autotrim: 是否启用自动裁剪（淘汰策略），false时退化为普通线程安全map
-func NewCache[K comparable, V CacheItem](capacity int, autotrim bool) *Cache[K, V] {
-	return &Cache[K, V]{
+func NewCache[V CacheItem](capacity int, autotrim bool) *Cache[V] {
+	return &Cache[V]{
 		capacity: capacity,
 		autotrim: autotrim,
-		data:     make(map[K]*entry[V]),
+		data:     make(map[string]*entry[V]),
 	}
 }
 
 // Get 获取缓存项，若存在则更新访问时间
-func (c *Cache[K, V]) Get(key K) (V, bool) {
+func (c *Cache[V]) Get(key string) (V, bool) {
 	c.mu.RLock()
 	e, ok := c.data[key]
 	if ok {
@@ -72,7 +73,7 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 // Put 插入缓存项
 // 注意：Go 泛型无法像 Rust 那样传入 size_calculator 闭包（因为 V 已约束为 CacheItem）
 // 所以直接调用 value.Len()
-func (c *Cache[K, V]) Put(key K, value V) {
+func (c *Cache[V]) Put(key string, value V) {
 	itemSize := value.Len()
 
 	c.mu.Lock()
@@ -111,7 +112,7 @@ func (c *Cache[K, V]) Put(key K, value V) {
 }
 
 // Del 删除缓存项
-func (c *Cache[K, V]) Del(key K) {
+func (c *Cache[V]) Del(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -125,7 +126,7 @@ func (c *Cache[K, V]) Del(key K) {
 
 // shrink 在持有写锁的前提下，驱逐最久未使用的项，直到有足够空间
 // requiredDelta 可能为负（替换时）
-func (c *Cache[K, V]) shrink(requiredDelta int) {
+func (c *Cache[V]) shrink(requiredDelta int) {
 	// 只有启用自动裁剪时才执行淘汰逻辑
 	if !c.autotrim {
 		return
@@ -143,7 +144,7 @@ func (c *Cache[K, V]) shrink(requiredDelta int) {
 
 	// 构建访问时间列表
 	type kv struct {
-		key   K
+		key   string
 		time  time.Time
 		entry *entry[V]
 	}
@@ -179,13 +180,23 @@ func (c *Cache[K, V]) shrink(requiredDelta int) {
 }
 
 // Len 返回当前缓存总大小
-func (c *Cache[K, V]) Len() int {
+func (c *Cache[V]) Len() int {
 	return int(c.currentSize.Load())
 }
 
 // Count 返回缓存项数量
-func (c *Cache[K, V]) Count() int {
+func (c *Cache[V]) Count() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.data)
+}
+
+func (c *Cache[V]) Clear(keyPrefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.data {
+		if strings.HasPrefix(k, keyPrefix) {
+			delete(c.data, k)
+		}
+	}
 }

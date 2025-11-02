@@ -45,6 +45,7 @@ type BlockConfig struct {
 }
 
 type DedupFS struct {
+	MountPoint string
 	ID         string
 	BaseDir    string
 	MetaDir    string
@@ -134,14 +135,19 @@ type NodeHandle struct {
 // 初始化DedupFS
 func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *BlockConfig) (*DedupFS, error) {
 	fs := &DedupFS{
-		ID:        fmt.Sprintf("%x", md5.Sum([]byte(mountPoint))),
-		BaseDir:   baseDir,
-		MetaDir:   filepath.Join(baseDir, "meta"),
-		DataDir:   filepath.Join(baseDir, "data"),
-		ChunkConf: chunkConf,
-		BlockConf: blockConf,
-		mutex:     sync.RWMutex{},
+		MountPoint: mountPoint,
+		ID:         fmt.Sprintf("%x", md5.Sum([]byte(mountPoint))),
+		BaseDir:    baseDir,
+		MetaDir:    filepath.Join(baseDir, "meta"),
+		DataDir:    filepath.Join(baseDir, "data"),
+		ChunkConf:  chunkConf,
+		BlockConf:  blockConf,
+		mutex:      sync.RWMutex{},
 	}
+
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+
 	fs.NextNodeID.Store(1)
 
 	var err error
@@ -498,6 +504,33 @@ func (fs *DedupFS) BackupINode() error {
 	return nil
 }
 
+func (fs *DedupFS) ClearAll() error {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+
+	logger.Errorf("clear all store for fs %s", fs.MountPoint)
+	ClearINodeCache(fs)
+	ClearChunkCache(fs)
+	ClearBlockCache(fs)
+
+	if fs.KVStore != nil {
+		if err := fs.KVStore.ClearAll(); err != nil {
+			logger.Errorf("failed to clear store: %v", err)
+			return err
+		}
+	}
+
+	// 重置根节点
+	fs.RootNode = NewTree()
+	fs.NextNodeID.Store(1) // 1已经用于根目录
+	root := CreateINode(1, 1, FileTypeDir, "/", 0755)
+	if err := SaveINode(fs, root); err != nil {
+		logger.Errorf("failed to save root inode: %v", err)
+		return err
+	}
+	return nil
+}
+
 // Attr retrieves the attributes of a node
 func (fn BaseNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	logger.Debugf("base.attr called for ino: %d", fn.ino)
@@ -802,12 +835,12 @@ func (fn BaseNode) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp
 		chunkHash := req.Name[len("user.dedupfs.chunk.meta."):]
 		chunk, err := GetChunkMeta(chunkHash, fn.fs)
 		if err != nil || chunk == nil {
-			logger.Errorf("getxattr: failed to get chunk meta: %v", err)
+			logger.Errorf("getxattr: failed to get chunk %s meta: %v", chunkHash, err)
 			return syscall.ENOENT
 		}
 		value, err := json.Marshal(chunk)
 		if err != nil {
-			logger.Errorf("failed to marshal chunk: %v", err)
+			logger.Errorf("failed to marshal chunk %s: %v", chunkHash, err)
 			return syscall.EIO
 		}
 		resp.Xattr = value
@@ -816,7 +849,7 @@ func (fn BaseNode) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp
 
 	inode, err := GetINode(fn.fs, fn.ino)
 	if err != nil || inode == nil {
-		logger.Errorf("getxattr: failed to get inode: %v", err)
+		logger.Errorf("getxattr: failed to get inode %d: %v", fn.ino, err)
 		return syscall.ENOENT
 	}
 
