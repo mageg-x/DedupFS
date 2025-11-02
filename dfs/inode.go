@@ -665,6 +665,7 @@ func CacheINode(fs *DedupFS, inode *INode) error {
 				cacheSize += len(chunk.Data)
 			}
 		}
+
 		if cacheSize < int(fs.BlockConf.Size) {
 			return nil
 		}

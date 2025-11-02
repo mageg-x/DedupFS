@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +19,9 @@ import (
 )
 
 var (
-	G_BLOCK_CACHE = cache.NewCache[*Block](1024*1024*1024, true)
-	CURRENT_BLOCK = sync.Map{}
+	G_BLOCK_CACHE   = cache.NewCache[*Block](1024*1024*1024, false)
+	CURRENT_BLOCK   = sync.Map{}
+	G_BLOCK_DELAYER = sync.Map{}
 )
 
 // BlockChunk 表示块中的一个块条目
@@ -54,6 +54,43 @@ func (b *Block) Len() int {
 	return len(b.Data) + len(b.Header.ChunkList)*32 + len(b.Header.ID) + 64
 }
 
+// Clone 返回 Block 的深拷贝
+func (b *Block) Clone() *Block {
+	if b == nil {
+		return nil
+	}
+
+	// 1. 拷贝 Header（值语义部分自动复制）
+	header := b.Header
+
+	// 2. 深拷贝 ChunkList（关键！）
+	if b.Header.ChunkList != nil {
+		header.ChunkList = make([]*BlockChunk, len(b.Header.ChunkList))
+		for i, chunk := range b.Header.ChunkList {
+			if chunk != nil {
+				// 每个 BlockChunk 是值语义（string + int32），直接复制即可
+				header.ChunkList[i] = &BlockChunk{
+					Hash: chunk.Hash, // string 是不可变的，赋值即“逻辑拷贝”
+					Size: chunk.Size,
+				}
+			}
+			// 如果 chunk == nil，保留 nil（保持语义一致）
+		}
+	}
+
+	// 3. 深拷贝 Data
+	var data []byte
+	if b.Data != nil {
+		data = make([]byte, len(b.Data))
+		copy(data, b.Data)
+	}
+
+	return &Block{
+		Header: header,
+		Data:   data,
+	}
+}
+
 // RemoveChunk 从 block 中删除指定 chunk
 func (b *Block) RemoveChunk(chunk *Chunk) error {
 	logger.Debugf("removing chunk %s from block %s", chunk.Hash, b.Header.ID)
@@ -68,7 +105,7 @@ func (b *Block) RemoveChunk(chunk *Chunk) error {
 	}
 
 	if targetIndex == -1 {
-		logger.Info("chunk %s not in block %s", chunk.Hash, b.Header.ID)
+		logger.Infof("chunk %s not in block %s", chunk.Hash, b.Header.ID)
 		return nil
 	}
 
@@ -88,7 +125,6 @@ func (b *Block) RemoveChunk(chunk *Chunk) error {
 	b.Data = newData
 
 	b.Header.TotalSize -= int64(chunk.Size)
-	b.Header.UpdatedAt = uint64(time.Now().UnixNano())
 
 	return nil
 }
@@ -357,7 +393,7 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 		return nil, fmt.Errorf("memfs read block failed %w", err)
 	}
 
-	logger.Debugf("successfully read block data, size: %d bytes", len(data))
+	logger.Errorf("successfully read block data, size: %d bytes", len(data))
 
 	block, err := DeserializeBlock(data)
 	if err != nil {
@@ -394,6 +430,73 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 	return block, nil
 }
 
+func doSaveBlock(block *Block, fs *DedupFS) error {
+
+	if block.Header.TotalSize != int64(len(block.Data)) {
+		logger.Errorf("size mismatch: total_size=%d != data_len=%d, compress=%v", block.Header.TotalSize, len(block.Data), block.Header.Compressed)
+		return fmt.Errorf("total_size=%d != data_len=%d", block.Header.TotalSize, len(block.Data))
+	}
+
+	// 写磁盘数据
+	blockPath := filepath.Join(fs.DataDir, GetBlockPath(block.Header.ID))
+	logger.Debugf("block save path: %s", blockPath)
+	if err := os.MkdirAll(filepath.Dir(blockPath), 0755); err != nil {
+		logger.Errorf("failed to create directory: %v", err)
+		return fmt.Errorf("failed to create dir: %w", err)
+	}
+
+	// 更新etag
+	block.Header.Etag = md5.Sum(block.Data)
+
+	if fs.BlockConf.Compress {
+		// 压缩
+		if d, err := utils.Compress(block.Data); err != nil || d == nil {
+			return fmt.Errorf("compress block failed %w", err)
+		} else {
+			// 如果压缩后的大小没有什么压缩空间，就放弃，为后续读提速
+			if float32(len(d))/float32(len(block.Data)) > 0.8 {
+				// 放弃
+			} else {
+				block.Data = d
+				block.Header.Compressed = true
+				block.Header.RealSize = int64(len(block.Data))
+			}
+		}
+	}
+
+	if fs.BlockConf.Encrypt {
+		// 加密
+		if d, err := utils.Encrypt(block.Data, fs.BlockConf.Password); err != nil || d == nil {
+			return fmt.Errorf("encrypt block failed %w", err)
+		} else {
+			block.Data = d
+			block.Header.Encrypted = true
+			block.Header.RealSize = int64(len(block.Data))
+		}
+	}
+	logger.Debugf("block %s: %d chunks, size %d:%d", block.Header.ID, len(block.Header.ChunkList), block.Header.TotalSize, len(block.Data))
+
+	// 序列化data
+	data, err := SerializeBlock(block)
+	if err != nil || data == nil {
+		logger.Errorf("failed to serialize block  %v", block.Header.ID, err)
+		return fmt.Errorf("serialize block failed %w", err)
+	}
+
+	mfs := memfs.GetInstance()
+	if mfs == nil {
+		logger.Errorf("memfs not initialized")
+		return fmt.Errorf("memfs not initialized")
+	}
+
+	if err := mfs.Write(blockPath, data, nil); err != nil {
+		logger.Errorf("failed to write block to memfs: %v", err)
+		return fmt.Errorf("memfs write block failed %w", err)
+	}
+	logger.Errorf("block %s successfully saved", block.Header.ID)
+	return nil
+}
+
 // SaveBlock 保存 block
 func SaveBlock(block *Block, fs *DedupFS) error {
 	if fs == nil {
@@ -412,12 +515,11 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 	}
 
 	if block == nil {
-		logger.Errorf("block is nil")
-		return fmt.Errorf("block is nil")
+		return nil
 	}
 
 	logger.Debugf("saving block %s for filesystem %s", block.Header.ID, fs.ID)
-	block.Header.UpdatedAt = uint64(time.Now().UnixNano())
+
 	block.Header.Compressed = false
 	block.Header.Encrypted = false
 	block.Header.RealSize = int64(len(block.Data))
@@ -427,88 +529,21 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 	}
 	logger.Debugf("block %s: %d chunks, total size: %d bytes", block.Header.ID, len(block.Header.ChunkList), block.Header.TotalSize)
 
-	if block.Header.TotalSize != int64(len(block.Data)) {
-		logger.Errorf("size mismatch: total_size=%d != data_len=%d", block.Header.TotalSize, len(block.Data))
-		return fmt.Errorf("total_size=%d != data_len=%d", block.Header.TotalSize, len(block.Data))
-	}
-
-	// 下面这些耗时的操作，放在 后面处理
-	processor := &memfs.Processor{
-		Func: func(data []byte, params map[string]string) ([]byte, error) {
-			// 反序列化data
-			b, err := DeserializeBlock(data)
-			if err != nil || b == nil {
-				return nil, fmt.Errorf("deserialize block failed %w", err)
-			}
-
-			// 更新etag
-			b.Header.Etag = md5.Sum(b.Data)
-
-			// 获取配置信息
-			compress := params["compress"] == "true"
-			encrypted := params["encrypted"] == "true"
-			if compress {
-				// 压缩
-				if d, err := utils.Compress(b.Data); err != nil || d == nil {
-					return nil, fmt.Errorf("compress block failed %w", err)
-				} else {
-					// 如果压缩后的大小没有什么压缩空间，就放弃，为后续读提速
-					if float32(len(d))/float32(len(b.Data)) > 0.8 {
-						// 放弃
-					} else {
-						b.Data = d
-						b.Header.Compressed = true
-						b.Header.RealSize = int64(len(b.Data))
-					}
-				}
-			}
-
-			if encrypted {
-				// 加密
-				if d, err := utils.Encrypt(b.Data, block.Header.ID+fs.BlockConf.Password); err != nil || d == nil {
-					return nil, fmt.Errorf("encrypt block failed %w", err)
-				} else {
-					b.Data = d
-					b.Header.Encrypted = true
-					b.Header.RealSize = int64(len(b.Data))
-				}
-			}
-			logger.Debugf("block %s: %d chunks, size %d:%d", block.Header.ID, len(block.Header.ChunkList), len(data), len(b.Data))
-			// 序列化data
-			return SerializeBlock(b)
-		},
-		Params: map[string]string{
-			"compress":  strconv.FormatBool(fs.BlockConf.Compress),
-			"encrypted": strconv.FormatBool(fs.BlockConf.Encrypt),
-		},
-	}
-
-	// 写磁盘数据
-	blockPath := filepath.Join(fs.DataDir, GetBlockPath(block.Header.ID))
-	logger.Debugf("block save path: %s", blockPath)
-	if err := os.MkdirAll(filepath.Dir(blockPath), 0755); err != nil {
-		logger.Errorf("failed to create directory: %v", err)
-		return fmt.Errorf("failed to create dir: %w", err)
-	}
-
-	mfs := memfs.GetInstance()
-	if mfs == nil {
-		logger.Errorf("memfs not initialized")
-		return fmt.Errorf("memfs not initialized")
-	}
-	data, err := SerializeBlock(block)
-	if err != nil || data == nil {
-		logger.Errorf("failed to serialize block  %v", block.Header.ID, err)
-		return fmt.Errorf("serialize block failed %w", &err)
-	}
-	if err := mfs.Write(blockPath, data, processor); err != nil {
-		logger.Errorf("failed to write block to memfs: %v", err)
-		return fmt.Errorf("memfs write block failed %w", err)
-	}
-	logger.Debugf("block %s successfully saved", block.Header.ID)
+	block.Header.UpdatedAt = uint64(time.Now().UnixNano())
 
 	_blockKey := "block:" + fs.ID + ":" + block.Header.ID
 	G_BLOCK_CACHE.Put(_blockKey, block)
+
+	// 延迟执行器
+	d, _ := G_BLOCK_DELAYER.LoadOrStore(_blockKey, utils.NewDelayer(time.Second))
+	d.(utils.Delayer).Call(func() {
+		if _block, ok := G_BLOCK_CACHE.Get(_blockKey); ok && _block != nil {
+			block := _block.Clone()
+			doSaveBlock(block, fs)
+		}
+		G_BLOCK_DELAYER.Delete(_blockKey)
+	})
+
 	return nil
 }
 
@@ -523,12 +558,11 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 				logger.Errorf("failed to remove chunk from current block %v", err)
 				return fmt.Errorf("remove chunk from current block failed %w", err)
 			} else {
-				if len(curBlock.Header.ChunkList) == 0 {
-					logger.Errorf("current block %s is empty, removing it", curBlock.Header.ID)
-					CURRENT_BLOCK.Store(blockKey, nil)
-				} else {
-					CURRENT_BLOCK.Store(blockKey, curBlock)
-				}
+				// if len(curBlock.Header.ChunkList) == 0 {
+				// 	logger.Errorf("current block %s is empty, removing it", curBlock.Header.ID)
+				// 	CURRENT_BLOCK.Store(blockKey, nil)
+				// }
+				CURRENT_BLOCK.Store(blockKey, curBlock)
 			}
 		} else {
 			logger.Errorf("invalid block type: %T", b)
@@ -564,11 +598,11 @@ func RemoveChunkFromBlock(chunk *Chunk, fs *DedupFS) error {
 			G_BLOCK_CACHE.Del(_blockKey)
 			return nil
 		} else {
-			// if err := SaveBlock(block, fs); err != nil {
-			// 	logger.Errorf("failed to save block after removing chunk: %v", err)
-			// 	return fmt.Errorf("save block failed %w", err)
-			// }
-			G_BLOCK_CACHE.Put(_blockKey, block)
+			if err := SaveBlock(block, fs); err != nil {
+				logger.Errorf("failed to save block after removing chunk: %v", err)
+				return fmt.Errorf("save block failed %w", err)
+			}
+			// G_BLOCK_CACHE.Put(_blockKey, block)
 			logger.Debugf("successfully removed chunk %s from block %s", chunk.Hash, chunk.BlockID)
 			return nil
 		}
@@ -603,7 +637,7 @@ func AddChunkToBlock(chunk *Chunk, fs *DedupFS) error {
 			logger.Errorf("failed to save block %s: %v", block.Header.ID, err)
 			return fmt.Errorf("failed to save block %s: %w", block.Header.ID, err)
 		} else {
-			logger.Info("block %s size %d:%d successfully saved", block.Header.ID, len(block.Data), block.Header.TotalSize)
+			logger.Infof("block %s size %d:%d successfully saved", block.Header.ID, len(block.Data), block.Header.TotalSize)
 			CURRENT_BLOCK.Store(blockKey, nil)
 		}
 	} else {

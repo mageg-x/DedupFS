@@ -48,7 +48,7 @@ type blockModel struct {
 }
 
 func (m *blockModel) loadChunkHex() {
-	if m.ChunkList == nil || len(m.ChunkList) == 0 {
+	if len(m.ChunkList) == 0 {
 		m.hexContent = "No valid chunks available."
 		m.hexLines = strings.Split(m.hexContent, "\n")
 		m.hexVP.SetContent(m.hexContent)

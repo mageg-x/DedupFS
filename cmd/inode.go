@@ -4,10 +4,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -105,7 +103,7 @@ func (m *inodeModel) highlightLine(lines []string, lineIndex, maxWidth int) stri
 
 // loadChunkHex for inode model
 func (m *inodeModel) loadChunkHex() {
-	if m.chunkList == nil || len(m.chunkList) == 0 {
+	if len(m.chunkList) == 0 {
 		m.hexContent = "No valid chunks available."
 		m.hexLines = strings.Split(m.hexContent, "\n")
 		m.hexVP.SetContent(m.hexContent)
@@ -120,7 +118,7 @@ func (m *inodeModel) loadChunkHex() {
 	}
 
 	chunk := m.chunkList[m.selectedChunkIndex]
-	if chunk.Data == nil || len(chunk.Data) == 0 {
+	if len(chunk.Data) == 0 {
 		attrName := fmt.Sprintf("user.dedupfs.chunk.data.%s", chunk.Hash)
 		if chunkBytes, err := utils.GetXAttr(m.mountPoint, attrName); err == nil && len(chunkBytes) > 0 {
 			m.hexContent = hex.Dump(chunkBytes)
@@ -135,7 +133,6 @@ func (m *inodeModel) loadChunkHex() {
 	m.hexContent = "Chunk data is not loaded."
 	m.hexLines = strings.Split(m.hexContent, "\n")
 	m.hexVP.SetContent(m.hexContent)
-	return
 }
 
 // scrollToSelectedChunk for inode model
@@ -458,21 +455,16 @@ func debugINodeAction(mountPoint, inodeName string) error {
 	}
 
 	// 通过stat 获取 inode 编号
-	fileInfo, err := os.Stat(inodePath)
+	stat, err := utils.FsStat(inodePath)
 	if err != nil {
-		logger.Errorf("failed to stat file: %v", err)
-		return fmt.Errorf("failed to stat file: %w", err)
-	}
-	stat, ok := fileInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		logger.Error("failed to get stat info")
-		return fmt.Errorf("failed to get stat info")
+		logger.Errorf("failed to get file stat: %v", err)
+		return fmt.Errorf("failed to get file stat: %w", err)
 	}
 	ino := stat.Ino
 	attrName := fmt.Sprintf("user.dedupfs.inode.%d", ino)
 	inodeBytes, err := utils.GetXAttr(mountPoint, attrName)
 	if err != nil {
-		logger.Error("Failed to get %s user.dedupfs.inode", inodePath)
+		logger.Errorf("Failed to get %s user.dedupfs.inode", inodePath)
 		return fmt.Errorf("failed to get %s user.dedupfs.inode: %w", inodePath, err)
 	}
 	var inode dfs.INode

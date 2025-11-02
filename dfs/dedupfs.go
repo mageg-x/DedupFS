@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package dfs
 
 import (
@@ -7,7 +9,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,10 +19,10 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"golang.org/x/sys/unix"
 
 	"github.com/mageg-x/dedupfs/internal/kvstore"
 	"github.com/mageg-x/dedupfs/internal/log"
+	"github.com/mageg-x/dedupfs/internal/utils"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -159,7 +160,7 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	fs.KVStore, err = kvstore.NewKVStore(path.Join(fs.MetaDir, "dedupfs.db"), false, func(op, key string, value interface{}) {
+	fs.KVStore, err = kvstore.NewKVStore(filepath.Join(fs.MetaDir, "dedupfs.db"), false, func(op, key string, value interface{}) {
 		if op == "set" || op == "del" {
 			if strings.HasPrefix(key, "inode:") {
 				fs.Dirty = true
@@ -320,14 +321,14 @@ func (fs *DedupFS) Root() (fs.Node, error) {
 	return DirNode{BaseNode: BaseNode{fs: fs, ino: 1}}, nil
 }
 
-// Statfs 方法 - 使用系统调用获取磁盘统计，失败时使用默认值
+// Statfs 方法 - 使用跨平台函数获取磁盘统计，失败时使用默认值
 func (fs *DedupFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.StatfsResponse) error {
 	// 总节点个数
 	totalFiles := len(fs.RootNode.Nodes)
-	// 使用系统调用获取数据目录的磁盘统计
-	var stat unix.Statfs_t
-	if err := unix.Statfs(fs.DataDir, &stat); err != nil {
-		logger.Errorf("failed to statfs %s: %v, using default values", fs.DataDir, err)
+	// 使用跨平台函数获取数据目录的磁盘统计
+	fsStats, err := utils.FsStats(fs.DataDir)
+	if err != nil {
+		logger.Errorf("failed to get filesystem stats for %s: %v, using default values", fs.DataDir, err)
 
 		// 使用默认值
 		resp.Bsize = 4096
@@ -341,17 +342,17 @@ func (fs *DedupFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fu
 
 		logger.Debugf("Using default Statfs: blocks=%d, bfree=%d, bsize=%d", resp.Blocks, resp.Bfree, resp.Bsize)
 	} else {
-		// 使用系统调用获取的真实统计信息
-		resp.Bsize = uint32(stat.Bsize)   // 文件系统块大小
-		resp.Blocks = stat.Blocks         // 总数据块数
-		resp.Bfree = stat.Bfree           // 空闲块数
-		resp.Bavail = stat.Bavail         // 可用块数（非超级用户）
-		resp.Files = uint64(totalFiles)   // 总文件节点数
-		resp.Ffree = stat.Ffree           // 空闲文件节点数
-		resp.Frsize = uint32(stat.Frsize) // 基本块大小
-		resp.Namelen = 255                // 最大文件名长度
+		// 使用跨平台函数获取的真实统计信息
+		resp.Bsize = uint32(fsStats.Bsize)     // 文件系统块大小
+		resp.Blocks = fsStats.Blocks           // 总数据块数
+		resp.Bfree = fsStats.Bfree             // 空闲块数
+		resp.Bavail = fsStats.Bavail           // 可用块数（非超级用户）
+		resp.Files = uint64(totalFiles)        // 总文件节点数
+		resp.Ffree = fsStats.Ffree             // 空闲文件节点数
+		resp.Frsize = uint32(fsStats.Frsize)   // 基本块大小
+		resp.Namelen = uint32(fsStats.Namelen) // 最大文件名长度
 
-		logger.Debugf("Statfs from syscall: blocks=%d, bfree=%d, bavail=%d, bsize=%d", resp.Blocks, resp.Bfree, resp.Bavail, resp.Bsize)
+		logger.Debugf("Statfs from cross-platform function: blocks=%d, bfree=%d, bavail=%d, bsize=%d", resp.Blocks, resp.Bfree, resp.Bavail, resp.Bsize)
 	}
 
 	return nil
@@ -505,8 +506,8 @@ func (fs *DedupFS) BackupINode() error {
 }
 
 func (fs *DedupFS) ClearAll() error {
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
+	// fs.mutex.Lock()
+	// defer fs.mutex.Unlock()
 
 	logger.Errorf("clear all store for fs %s", fs.MountPoint)
 	ClearINodeCache(fs)
@@ -515,7 +516,6 @@ func (fs *DedupFS) ClearAll() error {
 
 	if fs.KVStore != nil {
 		if err := fs.KVStore.ClearAll(); err != nil {
-			logger.Errorf("failed to clear store: %v", err)
 			return err
 		}
 	}
@@ -557,9 +557,10 @@ func (fn BaseNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Rdev = inode.Rdev
 	a.Flags = fuse.AttrFlags(inode.Flags)
 
-	if inode.Kind == FileTypeSymlink {
+	switch inode.Kind {
+	case FileTypeSymlink:
 		a.Mode |= os.ModeSymlink
-	} else if inode.Kind == FileTypeDir {
+	case FileTypeDir:
 		a.Mode |= os.ModeDir | 0o555
 	}
 	return nil
@@ -781,9 +782,10 @@ func (fn BaseNode) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *
 	resp.Attr.Rdev = inode.Rdev
 	resp.Attr.Flags = fuse.AttrFlags(inode.Flags)
 
-	if inode.Kind == FileTypeSymlink {
+	switch inode.Kind {
+	case FileTypeSymlink:
 		resp.Attr.Mode |= os.ModeSymlink
-	} else if inode.Kind == FileTypeDir {
+	case FileTypeDir:
 		resp.Attr.Mode |= os.ModeDir
 	}
 	return nil

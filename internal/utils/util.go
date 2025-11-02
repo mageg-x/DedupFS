@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 	mrand "math/rand"
-	"path"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -23,7 +23,7 @@ func DumpCaller(depth int) {
 	fmt.Printf("[CALLER STACK]\n")
 	for i := 1; i <= depth; i++ {
 		if pc, file, line, ok := runtime.Caller(i); ok {
-			_, filename := path.Split(file)
+			_, filename := filepath.Split(file)
 			fn := runtime.FuncForPC(pc)
 			fmt.Printf("  [%d] %s:%d %s\n", i, filename, line, fn.Name())
 		}

@@ -351,6 +351,10 @@ func (s *PKV) checkClosed() error {
 func (s *PKV) ClearAll() error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
+	if s.db == nil || s.closed {
+		return errors.New("store is closed")
+	}
 	start := []byte("")
 	end := bytes.Repeat([]byte{0xFF}, 64)
 	return s.db.DeleteRange(start, end, pebble.Sync)

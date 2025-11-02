@@ -1,3 +1,5 @@
+//go:build linux || darwin
+
 package mount
 
 import (
@@ -196,14 +198,21 @@ func Unmount(mountPoint string) error {
 		logger.Errorf("failed to unmount file %s: %v", mountPoint, err)
 		return fmt.Errorf("failed to unmount file system: %w", err)
 	}
-	logger.Info("successfully unmounted file %s", mountPoint)
-	if fs != nil && fs.KVStore != nil {
-		fs.KVStore.Close()
+
+	logger.Infof("successfully unmounted file %s", mountPoint)
+	if fs != nil {
+		dfs.ClearINodeCache(fs)
+		dfs.ClearChunkCache(fs)
+		dfs.ClearBlockCache(fs)
+
+		if fs.KVStore != nil {
+			fs.KVStore.Close()
+		}
+		if fs.Timer != nil {
+			fs.Timer.Stop()
+		}
 	}
-	if fs != nil && fs.Timer != nil {
-		fs.Timer.Stop()
-	}
-	fs.ClearAll()
+
 	delete(MountMap, mountPoint)
 	logger.Debugf("removed %s from mounted directories list", mountPoint)
 

@@ -31,7 +31,7 @@ func initRestore() {
 }
 
 // restoreAction is the cobra action for restore command
-func restoreAction(cmd *cobra.Command, args []string) error {
+func restoreAction(_ *cobra.Command, args []string) error {
 	dataDir := args[0]
 	toPath := args[1]
 
