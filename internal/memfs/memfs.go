@@ -216,7 +216,7 @@ func (m *MemFs) Remove(path string) error {
 		}
 
 		// 因为还在缓存中没有写，或者正在写进行中
-		logger.Errorf("memfs: remove file not found %s", _filepath)
+		logger.Debugf("memfs: remove file not found %s", _filepath)
 		return errors.New("file not found")
 	}
 

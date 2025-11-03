@@ -184,9 +184,9 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 	}
 
 	// 定时备份任务
-	d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
+	d := 5*time.Minute + time.Duration(rand.Int63n(int64(30*time.Second)))
 	fs.Timer = time.AfterFunc(d, func() {
-		fs.BackupINode()
+		fs.BackupINode(d)
 	})
 
 	// 初始化 一些属性
@@ -194,9 +194,9 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 	root.SetXattr("user.dedupfs.id", []byte(fs.ID))
 	root.SetXattr("user.dedupfs.datadir", []byte(fs.DataDir))
 	root.SetXattr("user.dedupfs.metadir", []byte(fs.MetaDir))
-	cc, _ := json.Marshal(chunkConf)
+	cc, _ := json.Marshal(fs.ChunkConf)
 	root.SetXattr("user.dedupfs.chunkconf", cc)
-	bc, _ := json.Marshal(blockConf)
+	bc, _ := json.Marshal(fs.BlockConf)
 	root.SetXattr("user.dedupfs.blockconf", bc)
 	if err := SaveINode(fs, root); err != nil {
 		logger.Errorf("failed to save root inode: %v", err)
@@ -221,7 +221,7 @@ func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
 	nodeSet := make(map[uint64]bool)      // 记录所有存在的节点
 
 	// 第一阶段：扫描所有inode并构建关系
-	prefix := "inode:"
+	prefix := fmt.Sprintf("inode:%s:", fs.ID)
 	startKey := ""
 	scanCount := 0
 
@@ -232,6 +232,7 @@ func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
 		}
 
 		for _, key := range keys {
+			logger.Debugf("scanned key: %s", key)
 			var ino uint64
 			if _, err := fmt.Sscanf(key, prefix+"%d", &ino); err != nil {
 				logger.Warnf("failed to parse key %s: %v", key, err)
@@ -414,14 +415,13 @@ type BackUpINode struct {
 	SymlinkTarget *string  `msgpack:"l"`
 }
 
-func (fs *DedupFS) BackupINode() error {
+func (fs *DedupFS) BackupINode(d time.Duration) error {
 	logger.Debugf("backing up filesystem node meta")
 
 	go func() {
 		defer func() {
-			d := 10*time.Minute + time.Duration(rand.Int63n(int64(2*time.Minute)))
 			fs.Timer = time.AfterFunc(d, func() {
-				fs.BackupINode()
+				fs.BackupINode(d)
 			})
 		}()
 
@@ -509,7 +509,7 @@ func (fs *DedupFS) ClearAll() error {
 	// fs.mutex.Lock()
 	// defer fs.mutex.Unlock()
 
-	logger.Errorf("clear all store for fs %s", fs.MountPoint)
+	logger.Debugf("clear all store for fs %s", fs.MountPoint)
 	ClearINodeCache(fs)
 	ClearChunkCache(fs)
 	ClearBlockCache(fs)
@@ -519,11 +519,20 @@ func (fs *DedupFS) ClearAll() error {
 			return err
 		}
 	}
-
+	fs.Dirty = true
 	// 重置根节点
 	fs.RootNode = NewTree()
 	fs.NextNodeID.Store(1) // 1已经用于根目录
 	root := CreateINode(1, 1, FileTypeDir, "/", 0755)
+	// 初始化 一些属性
+	root.SetXattr("user.dedupfs.version", []byte("0.1.0"))
+	root.SetXattr("user.dedupfs.id", []byte(fs.ID))
+	root.SetXattr("user.dedupfs.datadir", []byte(fs.DataDir))
+	root.SetXattr("user.dedupfs.metadir", []byte(fs.MetaDir))
+	cc, _ := json.Marshal(fs.ChunkConf)
+	root.SetXattr("user.dedupfs.chunkconf", cc)
+	bc, _ := json.Marshal(fs.BlockConf)
+	root.SetXattr("user.dedupfs.blockconf", bc)
 	if err := SaveINode(fs, root); err != nil {
 		logger.Errorf("failed to save root inode: %v", err)
 		return err
@@ -1219,7 +1228,7 @@ func (fn DirNode) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 // Read reads the contents of a file
 func (fn FileNode) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	logger.Errorf("file.read called for ino: %d, offset: %d, size: %d", fn.ino, req.Offset, req.Size)
+	logger.Debugf("file.read called for ino: %d, offset: %d, size: %d", fn.ino, req.Offset, req.Size)
 	fn.fs.mutex.RLock()
 	defer fn.fs.mutex.RUnlock()
 
@@ -1327,7 +1336,7 @@ func (fn FileNode) Release(ctx context.Context, req *fuse.ReleaseRequest) error 
 
 // Read reads data from a file handle
 func (h NodeHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	logger.Errorf("handle.read called for ino: %d, offset: %d, size: %d", h.ino, req.Offset, req.Size)
+	logger.Debugf("handle.read called for ino: %d, offset: %d, size: %d", h.ino, req.Offset, req.Size)
 
 	// 获取文件节点
 	inode, err := GetINode(h.fs, h.ino)

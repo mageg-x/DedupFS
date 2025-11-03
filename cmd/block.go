@@ -422,14 +422,19 @@ func debugBlockAction(mountPoint, blockID string) error {
 		}
 
 		for i, chunk := range block.Header.ChunkList {
-			attrName := fmt.Sprintf("user.dedupfs.chunk.meta.%s", chunk.Hash)
 			refCount := int32(0)
-			if chunkMetaBytes, err := utils.GetXAttr(mountPoint, attrName); err == nil && len(chunkMetaBytes) > 0 {
-				var _chunk dfs.Chunk
-				if err := json.Unmarshal(chunkMetaBytes, &_chunk); err == nil {
-					refCount = _chunk.RefCount
+
+			// 特殊chunk 特殊处理
+			if !strings.HasSuffix(blockID, "000000000") {
+				attrName := fmt.Sprintf("user.dedupfs.chunk.meta.%s", chunk.Hash)
+				if chunkMetaBytes, err := utils.GetXAttr(mountPoint, attrName); err == nil && len(chunkMetaBytes) > 0 {
+					var _chunk dfs.Chunk
+					if err := json.Unmarshal(chunkMetaBytes, &_chunk); err == nil {
+						refCount = _chunk.RefCount
+					}
 				}
 			}
+
 			chunkLines = append(chunkLines, fmt.Sprintf("%3d: %s, size=%d, ref=%d", i, chunk.Hash, chunk.Size, refCount))
 		}
 		ChunkList = block.Header.ChunkList

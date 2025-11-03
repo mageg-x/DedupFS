@@ -60,7 +60,7 @@ func restoreAction(_ *cobra.Command, args []string) error {
 	}
 
 	// 执行实际的恢复逻辑
-	if err := performRestore(dataDir, toPath); err != nil {
+	if err := performRestore(dataDir+"/data", toPath); err != nil {
 		logger.Error("Restore failed")
 		logger.Errorf("Restore failed: %v", err)
 		return err

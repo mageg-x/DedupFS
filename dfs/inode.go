@@ -353,7 +353,7 @@ func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
 			affectedEndIndex    *int
 			affectedStartOffset int64
 		)
-		logger.Errorf("performing overwrite write for inode %d, offset: %d, end: %d", n.Ino, offset, wEnd)
+		logger.Debugf("performing overwrite write for inode %d, offset: %d, end: %d", n.Ino, offset, wEnd)
 		for i, chunk := range n.Chunks {
 			var chunkSize int64
 			if len(chunk.Data) > 0 {
@@ -428,7 +428,6 @@ func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
 		now := time.Now().UTC()
 		n.Mtime = now
 		n.Ctime = now
-		n.Size = uint64(wEnd)
 		goto UPDATA_CACHE_LABLE
 	}
 
@@ -727,6 +726,9 @@ func SaveINode(fs *DedupFS, inode *INode) error {
 	}
 	// 废弃的chunks
 	for _, dropChunk := range inode.DropChunks {
+		if len(dropChunk.Hash) == 0 {
+			continue
+		}
 		if err := RemoveChunk(dropChunk.Hash, fs); err != nil {
 			logger.Errorf("failed to remove chunk %s: %v", dropChunk.Hash, err)
 			return fmt.Errorf("failed to remove chunk %s: %w", dropChunk.Hash, err)

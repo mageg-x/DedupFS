@@ -493,7 +493,7 @@ func doSaveBlock(block *Block, fs *DedupFS) error {
 		logger.Errorf("failed to write block to memfs: %v", err)
 		return fmt.Errorf("memfs write block failed %w", err)
 	}
-	logger.Errorf("block %s successfully saved", block.Header.ID)
+	logger.Debugf("block %s successfully saved", block.Header.ID)
 	return nil
 }
 

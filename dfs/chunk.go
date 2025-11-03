@@ -208,6 +208,11 @@ func RemoveChunk(hash string, fs *DedupFS) error {
 func PutChunks(chunks []*Chunk, fs *DedupFS) error {
 	logger.Debugf("putting %d chunks into block", len(chunks))
 	for _, chunk := range chunks {
+		if len(chunk.Hash) == 0 {
+			logger.Errorf("chunk hash is empty")
+			continue
+		}
+
 		if int32(len(chunk.Data)) != chunk.Size {
 			logger.Errorf("chunk size mismatch: %s expected=%d actual=%d", chunk.Hash, chunk.Size, len(chunk.Data))
 			return fmt.Errorf("hash=%s expected=%d actual=%d", chunk.Hash, chunk.Size, len(chunk.Data))
