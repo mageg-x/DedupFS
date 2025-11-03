@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/mageg-x/dedupfs/common/cache"
 	"io"
 
 	fastcdc "github.com/PlakarKorp/go-cdc-chunkers"
 	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/fastcdc"
 	"github.com/cespare/xxhash/v2"
-
-	"github.com/mageg-x/dedupfs/internal/cache"
 )
 
 var (

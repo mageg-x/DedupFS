@@ -11,8 +11,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mageg-x/dedupfs/dfs"
-	"github.com/mageg-x/dedupfs/internal/utils"
+	"github.com/mageg-x/dedupfs/common/dfs"
+	"github.com/mageg-x/dedupfs/common/utils"
 )
 
 const (

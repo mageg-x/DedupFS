@@ -2,10 +2,9 @@ package dfs
 
 import (
 	"fmt"
+	"github.com/mageg-x/dedupfs/common/cache"
 	"os"
 	"time"
-
-	"github.com/mageg-x/dedupfs/internal/cache"
 )
 
 var (

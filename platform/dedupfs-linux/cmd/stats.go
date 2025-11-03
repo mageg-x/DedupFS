@@ -8,11 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mageg-x/dedupfs/dfs"
-	"github.com/mageg-x/dedupfs/internal/ipc"
-	"github.com/mageg-x/dedupfs/internal/mount"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+
+	"github.com/mageg-x/dedupfs/common/dfs"
+	"github.com/mageg-x/dedupfs/common/ipc"
+	"github.com/mageg-x/dedupfs/common/mount"
 )
 
 var statsCmd = &cobra.Command{

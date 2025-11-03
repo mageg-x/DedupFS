@@ -20,14 +20,13 @@ package memfs
 import (
 	"errors"
 	"fmt"
+	"github.com/mageg-x/dedupfs/common/log"
+	"github.com/mageg-x/dedupfs/common/utils"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/mageg-x/dedupfs/internal/log"
-	"github.com/mageg-x/dedupfs/internal/utils"
 )
 
 var (

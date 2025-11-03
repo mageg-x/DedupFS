@@ -8,7 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
-	"github.com/mageg-x/dedupfs/internal/log"
+	"github.com/mageg-x/dedupfs/common/log"
 )
 
 var (

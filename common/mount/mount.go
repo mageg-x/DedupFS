@@ -4,15 +4,15 @@ package mount
 
 import (
 	"fmt"
+	"github.com/mageg-x/dedupfs/common/log"
+	"github.com/mageg-x/dedupfs/common/utils"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-	"github.com/mageg-x/dedupfs/dfs"
-	"github.com/mageg-x/dedupfs/internal/log"
-	"github.com/mageg-x/dedupfs/internal/utils"
+	"github.com/mageg-x/dedupfs/common/dfs"
 )
 
 // ChunkConfig represents chunk configuration options

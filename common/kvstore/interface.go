@@ -3,9 +3,8 @@ package kvstore
 import (
 	"errors"
 	"fmt"
+	"github.com/mageg-x/dedupfs/common/log"
 	"os"
-
-	"github.com/mageg-x/dedupfs/internal/log"
 )
 
 var (

@@ -17,12 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mageg-x/dedupfs/common/kvstore"
+	"github.com/mageg-x/dedupfs/common/log"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 
-	"github.com/mageg-x/dedupfs/internal/kvstore"
-	"github.com/mageg-x/dedupfs/internal/log"
-	"github.com/mageg-x/dedupfs/internal/utils"
+	"github.com/mageg-x/dedupfs/common/utils"
 	"github.com/vmihailenco/msgpack/v5"
 )
 

@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mageg-x/dedupfs/internal/ipc"
-	"github.com/mageg-x/dedupfs/internal/log"
-	"github.com/mageg-x/dedupfs/internal/mount"
+	"github.com/mageg-x/dedupfs/common/ipc"
+	"github.com/mageg-x/dedupfs/common/log"
+	"github.com/mageg-x/dedupfs/common/mount"
 	"github.com/spf13/cobra"
 )
 

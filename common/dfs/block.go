@@ -5,6 +5,9 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
+	"github.com/mageg-x/dedupfs/common/cache"
+	"github.com/mageg-x/dedupfs/common/memfs"
+	utils2 "github.com/mageg-x/dedupfs/common/utils"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,9 +16,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mageg-x/dedupfs/internal/cache"
-	"github.com/mageg-x/dedupfs/internal/memfs"
-	"github.com/mageg-x/dedupfs/internal/utils"
 )
 
 var (
@@ -406,7 +406,7 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 	}
 
 	if block.Header.Encrypted {
-		if d, err := utils.Decrypt(block.Data, blockID+fs.BlockConf.Password); err != nil {
+		if d, err := utils2.Decrypt(block.Data, blockID+fs.BlockConf.Password); err != nil {
 			return nil, fmt.Errorf("decrypt block failed %w", err)
 		} else {
 			block.Data = d
@@ -416,7 +416,7 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 	}
 
 	if block.Header.Compressed {
-		if d, err := utils.Decompress(block.Data); err != nil {
+		if d, err := utils2.Decompress(block.Data); err != nil {
 			return nil, fmt.Errorf("decompress block failed %w", err)
 		} else {
 			block.Data = d
@@ -450,7 +450,7 @@ func doSaveBlock(block *Block, fs *DedupFS) error {
 
 	if fs.BlockConf.Compress {
 		// 压缩
-		if d, err := utils.Compress(block.Data); err != nil || d == nil {
+		if d, err := utils2.Compress(block.Data); err != nil || d == nil {
 			return fmt.Errorf("compress block failed %w", err)
 		} else {
 			// 如果压缩后的大小没有什么压缩空间，就放弃，为后续读提速
@@ -466,7 +466,7 @@ func doSaveBlock(block *Block, fs *DedupFS) error {
 
 	if fs.BlockConf.Encrypt {
 		// 加密
-		if d, err := utils.Encrypt(block.Data, fs.BlockConf.Password); err != nil || d == nil {
+		if d, err := utils2.Encrypt(block.Data, fs.BlockConf.Password); err != nil || d == nil {
 			return fmt.Errorf("encrypt block failed %w", err)
 		} else {
 			block.Data = d
@@ -535,8 +535,8 @@ func SaveBlock(block *Block, fs *DedupFS) error {
 	G_BLOCK_CACHE.Put(_blockKey, block)
 
 	// 延迟执行器
-	d, _ := G_BLOCK_DELAYER.LoadOrStore(_blockKey, utils.NewDelayer(time.Second))
-	d.(utils.Delayer).Call(func() {
+	d, _ := G_BLOCK_DELAYER.LoadOrStore(_blockKey, utils2.NewDelayer(time.Second))
+	d.(utils2.Delayer).Call(func() {
 		if _block, ok := G_BLOCK_CACHE.Get(_blockKey); ok && _block != nil {
 			block := _block.Clone()
 			doSaveBlock(block, fs)

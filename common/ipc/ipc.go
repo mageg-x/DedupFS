@@ -5,12 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mageg-x/dedupfs/common/log"
 	"io"
 	"net"
 	"os"
 	"time"
-
-	"github.com/mageg-x/dedupfs/internal/log"
 )
 
 var (

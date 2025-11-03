@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/mageg-x/dedupfs/internal/ipc"
-	"github.com/mageg-x/dedupfs/internal/mount"
+	"github.com/mageg-x/dedupfs/common/ipc"
+	"github.com/mageg-x/dedupfs/common/mount"
 )
 
 // unmountCmd represents the unmount command

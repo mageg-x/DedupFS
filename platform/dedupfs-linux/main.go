@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/mageg-x/dedupfs/cmd"
-	"github.com/mageg-x/dedupfs/internal/log"
+	"github.com/mageg-x/dedupfs/common/log"
+	"github.com/mageg-x/dedupfs/platform/dedupfs-linux/cmd"
 )
 
 func main() {

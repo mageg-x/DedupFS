@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mageg-x/dedupfs/dfs"
-	"github.com/mageg-x/dedupfs/internal/utils"
+	"github.com/mageg-x/dedupfs/common/dfs"
+	"github.com/mageg-x/dedupfs/common/utils"
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"github.com/vmihailenco/msgpack/v5"

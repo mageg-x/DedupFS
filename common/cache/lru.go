@@ -1,13 +1,12 @@
 package cache
 
 import (
+	"github.com/mageg-x/dedupfs/common/log"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/mageg-x/dedupfs/internal/log"
 )
 
 var (
