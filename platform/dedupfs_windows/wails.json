@@ -1,0 +1,24 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "dedupfs",
+  "outputfilename": "dedupfs.exe",
+  "icon": "icon.ico",
+  "frontend": {
+    "dir": "frontend",
+    "install": "npm install",
+    "build": "npm run build",
+    "dev": {
+      "watcher": "npm run dev",
+      "serverUrl": "http://localhost:5173"
+    }
+  },
+  "build": {
+    "outputPath": "./build",
+    "binDir": "bin",
+    "assetsDir": "assets",
+    "windows": {
+      "icon": "icon.ico",
+      "manifest": "requireAdministrator"
+    }
+  }
+}
