@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/klauspost/compress/zstd"
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -75,6 +76,15 @@ func WithTryLock[L interface {
 
 func WrapFunction(fn func() error) error {
 	return fn()
+}
+
+// calcHash 使用 blake3
+func CalcHash(data []byte) string {
+	// fp := blake3.Sum256(data)
+	// hash := hex.EncodeToString(fp[:20])
+	fp := xxhash.Sum64(data)
+	hash := fmt.Sprintf("%x", fp)
+	return hash
 }
 
 func GenKey(password string, keyLen int) []byte {

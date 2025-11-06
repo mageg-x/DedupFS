@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # 进入Linux平台源码目录
-cd "$ROOT_DIR/platform/dedupfs-linux"
+cd "$ROOT_DIR/platform/dedupfs_linux"
 
 echo -e "${YELLOW}当前工作目录: $(pwd)${NC}"
 
@@ -46,14 +46,14 @@ go build -o "$ROOT_DIR/dedupfs"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ 编译成功!${NC}"
-    echo -e "${GREEN}可执行文件路径: $ROOT_DIR/dedupfs-linux${NC}"
+    echo -e "${GREEN}可执行文件路径: $ROOT_DIR/dedupfs${NC}"
     
     # 检查文件大小
-    FILE_SIZE=$(du -h "$ROOT_DIR/dedupfs-linux" | cut -f1)
+    FILE_SIZE=$(du -h "$ROOT_DIR/dedupfs" | cut -f1)
     echo -e "${YELLOW}文件大小: $FILE_SIZE${NC}"
     
     # 设置执行权限
-    chmod +x "$ROOT_DIR/dedupfs-linux"
+    chmod +x "$ROOT_DIR/dedupfs"
     echo -e "${GREEN}已设置执行权限${NC}"
     
     echo -e "${GREEN}\n编译完成!${NC}"

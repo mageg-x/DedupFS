@@ -7,6 +7,7 @@ import (
 
 type Node struct {
 	ID       uint64
+	Name     string
 	Parent   *Node
 	Children []*Node
 }
@@ -21,6 +22,7 @@ func NewTree() *Tree {
 	tree := &Tree{
 		Root: &Node{
 			ID:       1,
+			Name:     "/",
 			Children: []*Node{},
 			Parent:   nil,
 		},
@@ -40,7 +42,7 @@ func (t *Tree) Get(id uint64) (*Node, bool) {
 }
 
 // Insert 插入新节点到指定父节点
-func (t *Tree) Insert(parentID uint64, nodeID uint64) (*Node, error) {
+func (t *Tree) Insert(parentID uint64, nodeID uint64, name string) (*Node, error) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 
@@ -60,6 +62,7 @@ func (t *Tree) Insert(parentID uint64, nodeID uint64) (*Node, error) {
 	// 创建新节点
 	newNode := &Node{
 		ID:       nodeID,
+		Name:     name,
 		Parent:   parent,
 		Children: []*Node{},
 	}
@@ -73,16 +76,48 @@ func (t *Tree) Insert(parentID uint64, nodeID uint64) (*Node, error) {
 	return newNode, nil
 }
 
+func (t *Tree) Move(id uint64, newParentID uint64) error {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+
+	node, exists := t.Nodes[id]
+	if !exists {
+		logger.Errorf("node with id %d not found", id)
+		return fmt.Errorf("node with id %d not found", id)
+	}
+	newParent, exists := t.Nodes[newParentID]
+	if !exists {
+		logger.Errorf("new parent node with id %d not found", newParentID)
+		return fmt.Errorf("new parent node with id %d not found", newParentID)
+	}
+	if node.Parent != nil && node.Parent.ID != newParentID {
+		// 删除当前节点的父节点的子节点列表中的当前节点
+		for i, child := range node.Parent.Children {
+			if child.ID == node.ID {
+				node.Parent.Children = append(node.Parent.Children[:i], node.Parent.Children[i+1:]...)
+				break
+			}
+		}
+		// 添加到新的父节点的子节点列表中
+		newParent.Children = append(newParent.Children, node)
+		node.Parent = newParent
+		t.Nodes[node.ID] = node
+		return nil
+	}
+	logger.Infof("node with id %d is already a child of node with id %d", id, newParentID)
+	return nil
+}
+
 // Remove 删除指定ID的节点及其所有子节点
 func (t *Tree) Remove(id uint64) error {
+	logger.Debugf("remove node id %d", id)
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
 	// 不允许删除根节点
 	if id == t.Root.ID {
 		logger.Errorf("cannot remove root node")
 		return fmt.Errorf("cannot remove root node")
 	}
-
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
 
 	// 获取要删除的节点
 	node, exists := t.Nodes[id]
@@ -99,7 +134,7 @@ func (t *Tree) Remove(id uint64) error {
 	}
 
 	// 递归删除所有子节点
-	removeChildren(t, node)
+	removeAllChildren(t, node)
 
 	// 从父节点的子节点列表中移除
 	for i, child := range parent.Children {
@@ -116,10 +151,10 @@ func (t *Tree) Remove(id uint64) error {
 }
 
 // removeChildren 递归删除节点及其所有子节点
-func removeChildren(t *Tree, node *Node) {
+func removeAllChildren(t *Tree, node *Node) {
 	// 递归删除所有子节点
 	for _, child := range node.Children {
-		removeChildren(t, child)
+		removeAllChildren(t, child)
 	}
 	// 从映射中删除节点
 	delete(t.Nodes, node.ID)

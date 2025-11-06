@@ -13,54 +13,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/mageg-x/dedupfs/common/kvstore"
-	"github.com/mageg-x/dedupfs/common/log"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 
 	"github.com/mageg-x/dedupfs/common/utils"
-	"github.com/vmihailenco/msgpack/v5"
 )
-
-var (
-	// 获取logger实例用于输出日志，与mount包保持一致的名称
-	logger = log.GetLogger("dedupfs")
-)
-
-type ChunkConfig struct {
-	FixedSize bool
-	MinSize   int64
-	AvgSize   int64
-	MaxSize   int64
-}
-
-type BlockConfig struct {
-	Size     int64
-	Compress bool
-	Encrypt  bool
-	Password string
-}
-
-type DedupFS struct {
-	MountPoint string
-	ID         string
-	BaseDir    string
-	MetaDir    string
-	DataDir    string
-	NextNodeID atomic.Int64
-	ChunkConf  *ChunkConfig
-	BlockConf  *BlockConfig
-	RootNode   *Tree
-	KVStore    kvstore.KVStore
-	mutex      sync.RWMutex
-	Dirty      bool
-	Timer      *time.Timer
-}
 
 // CheckPermission 统一的权限校验方法
 func CheckPermission(inode *INode, uid, gid uint32, mask uint32) error {
@@ -72,35 +34,35 @@ func CheckPermission(inode *INode, uid, gid uint32, mask uint32) error {
 
 	if uid == inode.Uid {
 		// 所有者权限
-		if mask&04 != 0 && (inode.Perm&0400) != 0 {
+		if uint32(ReadPermission)&mask != 0 && (inode.Perm&0400) != 0 {
 			allowed = true
 		}
-		if mask&02 != 0 && (inode.Perm&0200) != 0 {
+		if uint32(WritePermission)&mask != 0 && (inode.Perm&0200) != 0 {
 			allowed = true
 		}
-		if mask&01 != 0 && (inode.Perm&0100) != 0 {
+		if uint32(ExecPermission)&mask != 0 && (inode.Perm&0100) != 0 {
 			allowed = true
 		}
 	} else if gid == inode.Gid {
 		// 组权限
-		if mask&04 != 0 && (inode.Perm&0040) != 0 {
+		if uint32(ReadPermission)&mask != 0 && (inode.Perm&0040) != 0 {
 			allowed = true
 		}
-		if mask&02 != 0 && (inode.Perm&0020) != 0 {
+		if uint32(WritePermission)&mask != 0 && (inode.Perm&0020) != 0 {
 			allowed = true
 		}
-		if mask&01 != 0 && (inode.Perm&0010) != 0 {
+		if uint32(ExecPermission)&mask != 0 && (inode.Perm&0010) != 0 {
 			allowed = true
 		}
 	} else {
 		// 其他用户权限
-		if mask&04 != 0 && (inode.Perm&0004) != 0 {
+		if uint32(ReadPermission)&mask != 0 && (inode.Perm&0004) != 0 {
 			allowed = true
 		}
-		if mask&02 != 0 && (inode.Perm&0002) != 0 {
+		if uint32(WritePermission)&mask != 0 && (inode.Perm&0002) != 0 {
 			allowed = true
 		}
-		if mask&01 != 0 && (inode.Perm&0001) != 0 {
+		if uint32(ExecPermission)&mask != 0 && (inode.Perm&0001) != 0 {
 			allowed = true
 		}
 	}
@@ -180,7 +142,7 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		fs.RootNode, err = fs.BuildNodeTree()
 	} else {
 		fs.RootNode = NewTree()
-		root = CreateINode(1, 1, FileTypeDir, "/", 0755)
+		root = CreateINode(1, 1, FileTypeDir, "/", 0777)
 		fs.NextNodeID.Store(1) // 1已经用于根目录
 	}
 
@@ -205,117 +167,6 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 	}
 
 	return fs, nil
-}
-
-// BuildNodeTree 通过扫描kvstore重建目录树
-func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
-	logger.Infof("reconstructing directory tree from kvstore")
-
-	// 使用迭代替代递归，避免栈溢出
-	type stackItem struct {
-		parent uint64
-		child  uint64
-	}
-
-	maxIno := uint64(1)
-	relation := make(map[uint64][]uint64) // 使用slice而不是map[uint64]struct{}，内存更友好
-	nodeSet := make(map[uint64]bool)      // 记录所有存在的节点
-
-	// 第一阶段：扫描所有inode并构建关系
-	prefix := fmt.Sprintf("inode:%s:", fs.ID)
-	startKey := ""
-	scanCount := 0
-
-	for {
-		keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 10000)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan keys with prefix %s: %w", prefix, err)
-		}
-
-		for _, key := range keys {
-			logger.Debugf("scanned key: %s", key)
-			var ino uint64
-			if _, err := fmt.Sscanf(key, prefix+"%d", &ino); err != nil {
-				logger.Warnf("failed to parse key %s: %v", key, err)
-				continue
-			}
-			maxIno = max(maxIno, ino)
-
-			inode, err := GetINode(fs, ino)
-			if err != nil {
-				logger.Warnf("failed to get inode %d: %v", ino, err)
-				continue
-			}
-
-			if inode != nil {
-				maxIno = max(maxIno, inode.Parent)
-				relation[inode.Parent] = append(relation[inode.Parent], ino)
-				nodeSet[ino] = true
-				scanCount++
-			}
-		}
-
-		if nextKey == "" {
-			break
-		}
-		startKey = nextKey
-	}
-
-	logger.Infof("scanned %d inodes, building tree structure", scanCount)
-
-	tree := NewTree()
-	visited := make(map[uint64]bool)
-	var orphanNodes []uint64
-
-	// 使用栈进行迭代构建，避免递归深度问题
-	stack := []stackItem{{parent: 1, child: 1}} // 从根节点开始
-
-	for len(stack) > 0 {
-		item := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		parent := item.parent
-		current := item.child
-
-		if visited[current] {
-			continue
-		}
-		visited[current] = true
-
-		// 插入到树中
-		if current != 1 {
-			if _, err := tree.Insert(parent, current); err != nil {
-				return nil, fmt.Errorf("failed to insert node %d under parent %d: %w", current, parent, err)
-			}
-		}
-
-		// 将子节点加入栈
-		children := relation[current]
-		for i := len(children) - 1; i >= 0; i-- { // 反向遍历以保持顺序
-			child := children[i]
-			if !visited[child] {
-				stack = append(stack, stackItem{parent: current, child: child})
-			}
-		}
-	}
-
-	// 正确的孤儿节点检测：所有在nodeSet中但未被visited的节点
-	for node := range nodeSet {
-		if !visited[node] {
-			orphanNodes = append(orphanNodes, node)
-			logger.Warnf("orphan node detected: inode %d", node)
-		}
-	}
-
-	if len(orphanNodes) > 0 {
-		logger.Warnf("found %d orphan nodes, attempting to attach to root", len(orphanNodes))
-	}
-
-	fs.RootNode = tree
-	fs.NextNodeID.Store(int64(maxIno))
-	logger.Infof("tree reconstruction completed: total nodes=%d, visited=%d, orphans=%d", len(nodeSet), len(visited), len(orphanNodes))
-
-	return tree, nil
 }
 
 func (fs *DedupFS) Root() (fs.Node, error) {
@@ -357,187 +208,6 @@ func (fs *DedupFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fu
 		logger.Debugf("Statfs from cross-platform function: blocks=%d, bfree=%d, bavail=%d, bsize=%d", resp.Blocks, resp.Bfree, resp.Bavail, resp.Bsize)
 	}
 
-	return nil
-}
-
-// CreateNode creates a new inode with the specified type
-func (fs *DedupFS) CreateNode(parentID uint64, uid, gid uint32, name string, kind FileType, mode os.FileMode, symlinkTarget *string) (*INode, error) {
-	logger.Debugf("creating %s node: %s with mode: %d", kind, name, mode)
-
-	// Check if node already exists
-	parentNode, exists := fs.RootNode.Get(parentID)
-	if !exists || parentNode == nil {
-		logger.Errorf("parent node not found: %d", parentID)
-		return nil, fmt.Errorf("parent node not found")
-	}
-
-	for _, child := range parentNode.Children {
-		if child != nil {
-			if inode, _ := GetINode(fs, child.ID); inode != nil && inode.Name == name {
-				logger.Errorf("node already exists: %s", name)
-				return nil, fuse.EEXIST
-			}
-		}
-	}
-
-	// Create new inode
-	ino := uint64(fs.NextNodeID.Add(1))
-	inode := CreateINode(ino, parentID, kind, name, uint16(mode))
-	inode.Uid = uid
-	inode.Gid = gid
-	inode.SymlinkTarget = symlinkTarget
-
-	// For directories, set correct mode and nlink
-	if kind == FileTypeDir {
-		inode.Perm |= 0111 // Ensure executable bits are set for directories
-	}
-
-	// Insert into tree and save
-	if _, err := fs.RootNode.Insert(parentID, ino); err != nil {
-		logger.Errorf("failed to insert node into tree: %v", err)
-		return nil, err
-	}
-
-	if err := SaveINode(fs, inode); err != nil {
-		logger.Errorf("failed to save inode: %v", err)
-		return nil, err
-	}
-
-	logger.Debugf("created %s node: %s with ino %d", kind, name, ino)
-	return inode, nil
-}
-
-type BackUpINode struct {
-	Ino           uint64   `msgpack:"i"`
-	Parent        uint64   `msgpack:"p"`
-	Kind          FileType `msgpack:"k"`
-	Name          string   `msgpack:"n"`
-	Chunks        []string `msgpack:"c"`
-	SymlinkTarget *string  `msgpack:"l"`
-}
-
-func (fs *DedupFS) BackupINode(d time.Duration) error {
-	logger.Debugf("backing up filesystem node meta")
-
-	go func() {
-		defer func() {
-			fs.Timer = time.AfterFunc(d, func() {
-				fs.BackupINode(d)
-			})
-		}()
-
-		if fs.Dirty {
-			fs.Dirty = false
-
-			prefix := "inode:"
-			startKey := ""
-
-			blockIdx := 0
-			bakINodes := []BackUpINode{}
-
-			// 计算备份一次耗时
-			start := time.Now()
-			for {
-				keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 10000)
-				if err != nil {
-					logger.Errorf("failed to scan inodes: %v", err)
-					return
-				}
-				for _, key := range keys {
-					var inode *INode
-					if err := fs.KVStore.Get(key, &inode); err != nil {
-						logger.Errorf("failed to get inode %s: %v", key, err)
-						continue
-					}
-					backupINode := BackUpINode{
-						Ino:           inode.Ino,
-						Parent:        inode.Parent,
-						Kind:          inode.Kind,
-						Name:          inode.Name,
-						Chunks:        []string{},
-						SymlinkTarget: inode.SymlinkTarget,
-					}
-					for _, chunk := range inode.Chunks {
-						backupINode.Chunks = append(backupINode.Chunks, chunk.Hash)
-					}
-					bakINodes = append(bakINodes, backupINode)
-				}
-
-				if data, err := msgpack.Marshal(bakINodes); err != nil {
-					logger.Errorf("failed to marshal inodes: %v", err)
-					return
-				} else {
-					block := &Block{
-						Header: BlockHeader{
-							ID:        fmt.Sprintf("%03d00000000000000000000000000000", blockIdx),
-							Ver:       1,
-							Etag:      md5.Sum(data),
-							TotalSize: int64(len(data)),
-							CreatedAt: uint64(time.Now().UnixNano()),
-							ChunkList: []*BlockChunk{
-								{
-									Hash: calcHash(data),
-									Size: int32(len(data)),
-								},
-							},
-						},
-						Data: data,
-					}
-
-					if err := SaveBlock(block, fs); err != nil {
-						logger.Errorf("failed to save block: %v", err)
-						return
-					} else {
-						logger.Infof("success saved block: %s", block.Header.ID)
-						blockIdx++
-						bakINodes = []BackUpINode{}
-					}
-				}
-
-				if nextKey == "" {
-					break
-				}
-				startKey = nextKey
-			}
-
-			logger.Infof("backup inodes done, cost: %s", time.Since(start))
-		}
-	}()
-	return nil
-}
-
-func (fs *DedupFS) ClearAll() error {
-	// fs.mutex.Lock()
-	// defer fs.mutex.Unlock()
-
-	logger.Debugf("clear all store for fs %s", fs.MountPoint)
-	ClearINodeCache(fs)
-	ClearChunkCache(fs)
-	ClearBlockCache(fs)
-
-	if fs.KVStore != nil {
-		if err := fs.KVStore.ClearAll(); err != nil {
-			return err
-		}
-	}
-	fs.Dirty = true
-	// 重置根节点
-	fs.RootNode = NewTree()
-	fs.NextNodeID.Store(1) // 1已经用于根目录
-	root := CreateINode(1, 1, FileTypeDir, "/", 0755)
-	// 初始化 一些属性
-	root.SetXattr("user.dedupfs.version", []byte("0.1.0"))
-	root.SetXattr("user.dedupfs.id", []byte(fs.ID))
-	root.SetXattr("user.dedupfs.datadir", []byte(fs.DataDir))
-	root.SetXattr("user.dedupfs.metadir", []byte(fs.MetaDir))
-	cc, _ := json.Marshal(fs.ChunkConf)
-	root.SetXattr("user.dedupfs.chunkconf", cc)
-	bc, _ := json.Marshal(fs.BlockConf)
-	root.SetXattr("user.dedupfs.blockconf", bc)
-	if err := SaveINode(fs, root); err != nil {
-		logger.Errorf("failed to save root inode: %v", err)
-		return err
-	}
 	return nil
 }
 
@@ -642,7 +312,7 @@ func (fn BaseNode) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	}
 
 	// 检查权限
-	if err := CheckPermission(inode, uint32(os.Getuid()), uint32(os.Getgid()), 0x07); err != nil {
+	if err := CheckPermission(inode, uint32(os.Getuid()), uint32(os.Getgid()), uint32(ReadWritePermission)); err != nil {
 		logger.Errorf("dir.remove: permission denied: %v", err)
 		return syscall.EACCES
 	}
@@ -653,10 +323,6 @@ func (fn BaseNode) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 		return syscall.ENOTEMPTY
 	}
 
-	if err := fn.fs.RootNode.Remove(node.ID); err != nil {
-		logger.Errorf("dir.remove: failed to remove node: %v", err)
-		return syscall.EIO
-	}
 	if err := DelINode(fn.fs, node.ID); err != nil {
 		logger.Errorf("dir.remove: failed to delete inode: %v", err)
 		return syscall.EIO
@@ -667,20 +333,86 @@ func (fn BaseNode) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 }
 
 // Rename renames a file or directory
+
+// 源类型 (oldpath)	目标类型 (newpath)	目标是否存在	结果
+// 任何类型	任何类型	否	成功重命名
+// 非目录	非目录	是	成功替换（原子性）
+// 非目录	目录	是	失败，返回ENOTDIR（因为不能用非目录替换目录）
+// 目录	非目录	是	失败，返回EISDIR（因为不能用目录替换非目录）
+// 目录	目录	是	如果目标目录为空，则成功替换；如果目标目录非空，则失败，返回ENOTEMPTY
 func (fn BaseNode) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
 	logger.Debugf("dir.rename called for ino: %d, name: %s, newDir: %s", fn.ino, req.OldName, req.NewName)
 	fn.fs.mutex.Lock()
 	defer fn.fs.mutex.Unlock()
+
+	newDirNode, ok := fn.fs.RootNode.Get(uint64(req.NewDir))
+	if !ok || newDirNode == nil {
+		logger.Errorf("dir.rename: new directory node not found: %d", req.NewDir)
+		return syscall.ENOENT
+	}
 
 	inode, err := GetINode(fn.fs, fn.ino)
 	if err != nil || inode == nil {
 		logger.Errorf("dir.rename: failed to get inode: %v", err)
 		return syscall.ENOENT
 	}
-
-	if err := CheckPermission(inode, uint32(os.Getuid()), uint32(os.Getgid()), 0x07); err != nil {
+	// 对源目标有读权限
+	if err := CheckPermission(inode, uint32(os.Getuid()), uint32(os.Getgid()), uint32(ReadPermission)); err != nil {
 		logger.Errorf("dir.rename: permission denied: %v", err)
 		return syscall.EACCES
+	}
+	newDirINode, err := GetINode(fn.fs, uint64(req.NewDir))
+	if err != nil || newDirINode == nil {
+		logger.Errorf("dir.rename: failed to get new directory inode: %v", err)
+		return syscall.ENOENT
+	}
+	// 对目标目录有写权限
+	if err := CheckPermission(newDirINode, uint32(os.Getuid()), uint32(os.Getgid()), uint32(AllPermission)); err != nil {
+		logger.Errorf("dir.rename: permission denied: %v", err)
+		return syscall.EACCES
+	}
+
+	// 如果目标目录下已经存在同名文件或目录，就非常复杂的逻辑
+	for _, child := range newDirNode.Children {
+		if child != nil {
+			if target, _ := GetINode(fn.fs, child.ID); target != nil && target.Name == req.NewName {
+				// 源是目录，目标不是目录，失败返回
+				if inode.Kind == FileTypeDir && target.Kind != FileTypeDir {
+					logger.Errorf("dir.rename: target is not dir: %s", req.NewName)
+					return syscall.ENOTDIR
+				}
+				// 源是文件，目标是目录，失败返回
+				if inode.Kind != FileTypeDir && target.Kind == FileTypeDir {
+					logger.Errorf("dir.rename: target is dir: %s", req.NewName)
+					return syscall.EISDIR
+				}
+				// 目标目录非空，失败返回
+				if target.Kind == FileTypeDir && len(child.Children) > 0 {
+					logger.Errorf("dir.rename: target directory not empty: %s, has %d childrens", req.NewName, len(child.Children))
+					return syscall.ENOTEMPTY
+				}
+				// 都是文件， 或者  都是目录，目标目录为空---- 就替换，先删除旧的
+				if (inode.Kind == FileTypeFile && target.Kind == FileTypeFile) ||
+					(inode.Kind == FileTypeDir && target.Kind == FileTypeDir) {
+					if err := DelINode(fn.fs, child.ID); err != nil {
+						logger.Errorf("dir.rename: failed to delete inode: %v", err)
+						return syscall.EIO
+					}
+					break
+				}
+				// 走到这儿就是非预期情况，失败返回
+				logger.Errorf("dir.rename: unexpected condition: %s", req.NewName)
+				return syscall.EIO
+			}
+		}
+	}
+
+	// 如果不是同一个目录，需要更改父子关系
+	if inode.Parent != newDirINode.Ino {
+		if err := fn.fs.RootNode.Move(inode.Ino, newDirINode.Ino); err != nil {
+			logger.Errorf("dir.rename: failed to move node: %v", err)
+			return syscall.EIO
+		}
 	}
 
 	inode.Name = req.NewName
@@ -729,7 +461,7 @@ func (fn BaseNode) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *
 		return syscall.ENOENT
 	}
 
-	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, 0x07); err != nil {
+	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, uint32(AllPermission)); err != nil {
 		logger.Errorf("base.setattr: permission denied: %v", err)
 		return syscall.EACCES
 	}
@@ -907,7 +639,7 @@ func (fn BaseNode) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) erro
 		return syscall.ENOENT
 	}
 
-	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, 0x02); err != nil {
+	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, uint32(WritePermission)); err != nil {
 		logger.Errorf("setxattr: permission denied: %v", err)
 		return syscall.EACCES
 	}
@@ -939,7 +671,7 @@ func (fn BaseNode) Removexattr(ctx context.Context, req *fuse.RemovexattrRequest
 		return syscall.ENOENT
 	}
 
-	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, 0x02); err != nil {
+	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, uint32(WritePermission)); err != nil {
 		logger.Errorf("removexattr: permission denied: %v", err)
 		return syscall.EACCES
 	}
@@ -971,7 +703,15 @@ func (fn FileNode) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.O
 	}
 
 	// 检查权限
-	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, 0x04); err != nil {
+	mask := uint32(0)
+	if req.Flags.IsReadOnly() {
+		mask = uint32(ReadPermission)
+	} else if req.Flags.IsWriteOnly() {
+		mask = uint32(WritePermission)
+	} else if req.Flags.IsReadWrite() {
+		mask = uint32(ReadPermission | WritePermission)
+	}
+	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, uint32(mask)); err != nil {
 		logger.Errorf("file.open: permission denied: %v", err)
 		return nil, syscall.EACCES
 	}
@@ -1004,7 +744,15 @@ func (fn DirNode) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 	}
 
 	// 检查权限
-	if err := CheckPermission(_inode, req.Header.Uid, req.Header.Gid, 0x02); err != nil {
+	mask := uint32(0)
+	if req.Flags.IsReadOnly() {
+		mask = uint32(ReadPermission)
+	} else if req.Flags.IsWriteOnly() {
+		mask = uint32(WritePermission)
+	} else if req.Flags.IsReadWrite() {
+		mask = uint32(ReadPermission | WritePermission)
+	}
+	if err := CheckPermission(_inode, req.Header.Uid, req.Header.Gid, mask); err != nil {
 		logger.Errorf("dir.create: permission denied: %v", err)
 		return nil, nil, syscall.EACCES
 	}
@@ -1073,7 +821,7 @@ func (fn DirNode) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, e
 	}
 
 	// 检查权限
-	if err := CheckPermission(_inode, req.Header.Uid, req.Header.Gid, 0x02); err != nil {
+	if err := CheckPermission(_inode, req.Header.Uid, req.Header.Gid, uint32(WritePermission)); err != nil {
 		logger.Errorf("dir.mkdir: permission denied: %v", err)
 		return nil, syscall.EACCES
 	}
@@ -1126,7 +874,7 @@ func (fn BaseNode) Symlink(ctx context.Context, req *fuse.SymlinkRequest) (fs.No
 	}
 
 	// 检查权限
-	if err := CheckPermission(_inode, req.Header.Uid, req.Header.Gid, 0x02); err != nil {
+	if err := CheckPermission(_inode, req.Header.Uid, req.Header.Gid, uint32(WritePermission)); err != nil {
 		logger.Errorf("dir.symlink: permission denied: %v", err)
 		return nil, syscall.EACCES
 	}
@@ -1241,7 +989,7 @@ func (fn FileNode) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.R
 	}
 
 	// 检查读权限 (04: 读权限)
-	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, 04); err != nil {
+	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, uint32(ReadPermission)); err != nil {
 		logger.Errorf("file.read: permission denied for ino: %d", fn.ino)
 		return err
 	}
@@ -1271,7 +1019,7 @@ func (fn FileNode) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse
 	}
 
 	// 检查写权限 (02: 写权限)
-	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, 0x07); err != nil {
+	if err := CheckPermission(inode, req.Header.Uid, req.Header.Gid, uint32(WritePermission)); err != nil {
 		logger.Errorf("file.write: permission denied for ino: %d", fn.ino)
 		return err
 	}

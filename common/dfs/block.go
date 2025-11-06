@@ -5,15 +5,16 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
-	"github.com/mageg-x/dedupfs/common/cache"
-	"github.com/mageg-x/dedupfs/common/memfs"
-	utils2 "github.com/mageg-x/dedupfs/common/utils"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mageg-x/dedupfs/common/cache"
+	"github.com/mageg-x/dedupfs/common/memfs"
+	utils2 "github.com/mageg-x/dedupfs/common/utils"
 
 	"github.com/google/uuid"
 )
@@ -393,7 +394,7 @@ func ReadBlock(blockID string, fs *DedupFS) (*Block, error) {
 		return nil, fmt.Errorf("memfs read block failed %w", err)
 	}
 
-	logger.Errorf("successfully read block data, size: %d bytes", len(data))
+	logger.Debugf("successfully read block data, size: %d bytes", len(data))
 
 	block, err := DeserializeBlock(data)
 	if err != nil {

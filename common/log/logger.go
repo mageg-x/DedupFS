@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -197,6 +198,7 @@ func (l *Logger) Errorf(format string, args ...any) {
 	if !l.Logger.IsLevelEnabled(logrus.ErrorLevel) {
 		return
 	}
+	// os.WriteFile("debug.txt", []byte(format), 0644)
 	caller := l.getCaller()
 	l.Logger.Errorf("%s "+format, append([]any{caller}, args...)...)
 }
@@ -274,8 +276,19 @@ func GetLogger(name string) *Logger {
 		MaxAge:     config.MaxAge,
 		Compress:   config.Compress,
 	}
-	logger.SetOutput(io.MultiWriter(os.Stdout, fileWriter))
-	// logger.SetOutput(fileWriter)
+
+	// 判断 stdout 是否是终端（TTY）
+	isTerminal := term.IsTerminal(os.Stdout.Fd())
+	var output io.Writer
+	if isTerminal {
+		// 在终端中运行（Linux/macOS 终端，或 Windows 的 cmd/PowerShell）
+		output = io.MultiWriter(os.Stdout, fileWriter)
+	} else {
+		// GUI 程序（如 Windows 双击 .exe）或重定向输出
+		output = fileWriter
+	}
+
+	logger.SetOutput(output)
 
 	logger.SetFormatter(&CustomLogFormatter{})
 

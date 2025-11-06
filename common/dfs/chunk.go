@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/mageg-x/dedupfs/common/cache"
 	"io"
+
+	"github.com/mageg-x/dedupfs/common/cache"
+	"github.com/mageg-x/dedupfs/common/utils"
 
 	fastcdc "github.com/PlakarKorp/go-cdc-chunkers"
 	_ "github.com/PlakarKorp/go-cdc-chunkers/chunkers/fastcdc"
-	"github.com/cespare/xxhash/v2"
 )
 
 var (
@@ -61,22 +62,13 @@ func (c *Chunk) Merge(other *Chunk) {
 	logger.Debugf("merging chunks: %s + %s", c.Hash, other.Hash)
 	c.Data = append(c.Data, other.Data...)
 	c.Size = int32(len(c.Data))
-	c.Hash = calcHash(c.Data)
+	c.Hash = utils.CalcHash(c.Data)
 	logger.Debugf("merged chunk hash: %s, size: %d", c.Hash, c.Size)
-}
-
-// calcHash 使用 blake3
-func calcHash(data []byte) string {
-	// fp := blake3.Sum256(data)
-	// hash := hex.EncodeToString(fp[:20])
-	fp := xxhash.Sum64(data)
-	hash := fmt.Sprintf("%x", fp)
-	return hash
 }
 
 // NewChunk 创建新块
 func NewChunk(data []byte) *Chunk {
-	hash := calcHash(data)
+	hash := utils.CalcHash(data)
 	logger.Debugf("creating new chunk with hash %s, size: %d bytes", hash, len(data))
 	return &Chunk{
 		Hash:     hash,

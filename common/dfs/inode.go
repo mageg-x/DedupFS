@@ -2,9 +2,12 @@ package dfs
 
 import (
 	"fmt"
-	"github.com/mageg-x/dedupfs/common/cache"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/mageg-x/dedupfs/common/cache"
+	"github.com/mageg-x/dedupfs/common/utils"
 )
 
 var (
@@ -643,7 +646,7 @@ func CreateINode(ino, pino uint64, kind FileType, name string, mode uint16) *INo
 		Chunks:     []*INodeChunk{},
 		DropChunks: []*INodeChunk{},
 	}
-	logger.Debugf("inode %d created successfully", inode.Ino)
+	logger.Debugf("inode %d Perm %o created successfully", inode.Ino, inode.Perm)
 	return inode
 }
 
@@ -694,7 +697,7 @@ func SaveINode(fs *DedupFS, inode *INode) error {
 						savaChunks = append(savaChunks, chunks...)
 					}
 				} else {
-					chunk.Hash = calcHash(chunk.Data)
+					chunk.Hash = utils.CalcHash(chunk.Data)
 					newChunks = append(newChunks, &INodeChunk{
 						Hash: chunk.Hash,
 					})
@@ -783,6 +786,13 @@ func DelINode(fs *DedupFS, ino uint64) error {
 		logger.Errorf("failed to get inode %d: %v", ino, err)
 		return fmt.Errorf("failed to get inode %d: %v", ino, err)
 	} else {
+		// 如果inode 是非空目录，则失败返回
+		if inode.Kind == FileTypeDir {
+			if node, ok := fs.RootNode.Get(ino); ok && node != nil && node.Children != nil && len(node.Children) > 0 {
+				logger.Errorf("dir.remove: inode is not empty dir: %s", inode.Name)
+				return fmt.Errorf("dir.remove: inode is not empty dir: %s", inode.Name)
+			}
+		}
 		for _, chunk := range inode.Chunks {
 			if chunk.Hash != "" {
 				if err := RemoveChunk(chunk.Hash, fs); err != nil {
@@ -796,12 +806,17 @@ func DelINode(fs *DedupFS, ino uint64) error {
 	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
 	G_INODE_CACHE.Del(inodeKey)
 
-	err := fs.KVStore.Del(inodeKey)
-	if err != nil {
+	if err := fs.KVStore.Del(inodeKey); err != nil {
 		logger.Errorf("failed to delete inode %d: %v", ino, err)
 		return err
 	}
 	logger.Debugf("inode %d deleted successfully", ino)
+
+	// 从目录树中删除
+	if err := fs.RootNode.Remove(ino); err != nil {
+		logger.Errorf("failed to remove node: %v", err)
+		return err
+	}
 
 	// 判断释放全部Cache 空间
 	if root, ok := fs.RootNode.Get(1); ok && root != nil && root.ID == 1 {
@@ -811,6 +826,58 @@ func DelINode(fs *DedupFS, ino uint64) error {
 	}
 
 	return nil
+}
+
+// 获取inode 完整路径
+// 逐层查找父亲的名字，直到根节点，返回节点完整路径
+func Ino2Path(fs *DedupFS, ino uint64) string {
+	if ino == 1 {
+		return "/"
+	}
+
+	node, _ := fs.RootNode.Get(ino)
+	if node == nil {
+		return ""
+	}
+
+	// 从当前节点向上收集名称（逆序）
+	var components []string
+	for node != nil && node.ID != 1 {
+		components = append(components, node.Name)
+		node = node.Parent
+	}
+
+	// 反转组件（因为是从下往上收集的）
+	for i, j := 0, len(components)-1; i < j; i, j = i+1, j-1 {
+		components[i], components[j] = components[j], components[i]
+	}
+
+	return "/" + strings.Join(components, "/")
+}
+
+func Path2Ino(fs *DedupFS, path string) uint64 {
+	if path == "/" {
+		return 1
+	}
+
+	node := fs.RootNode.Root
+	for _, name := range strings.Split(path, "/") {
+		if name == "" {
+			continue
+		}
+		var child *Node
+		for _, c := range node.Children {
+			if c.Name == name {
+				child = c
+				break
+			}
+		}
+		if child == nil {
+			return 0
+		}
+		node = child
+	}
+	return node.ID
 }
 
 func ClearINodeCache(fs *DedupFS) {
