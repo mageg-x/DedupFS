@@ -57,3 +57,9 @@ func CleanupMounts() {
 		}
 	}
 }
+
+func GetDedupFS(mountPoint string) *dfs.DedupFS {
+	MountMutex.RLock()
+	defer MountMutex.RUnlock()
+	return MountMap[mountPoint]
+}

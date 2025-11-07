@@ -93,7 +93,7 @@ func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
 	nodeSet := make(map[uint64]string)    // 记录所有存在的节点
 
 	// 第一阶段：扫描所有inode并构建关系
-	prefix := fmt.Sprintf("inode:%s:", fs.ID)
+	prefix := fmt.Sprintf("inode:")
 	startKey := ""
 	scanCount := 0
 

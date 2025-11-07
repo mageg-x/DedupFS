@@ -17,6 +17,7 @@
 package utils
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/cespare/xxhash/v2"
@@ -28,7 +29,7 @@ var (
 	_keylocks [shardCount]sync.Mutex
 )
 
-func For(key string) sync.Locker {
+func For(key string) *sync.Mutex {
 	sum := xxhash.Sum64([]byte(key))
 	return &_keylocks[sum%shardCount]
 }
@@ -43,9 +44,23 @@ func Unlock(key string) {
 	lock.Unlock()
 }
 
+func TryLock(key string) bool {
+	lock := For(key)
+	return lock.TryLock()
+}
+
 func WithLockKey(key string, fn func() error) error {
 	l := For(key)
 	l.Lock()
+	defer l.Unlock()
+	return fn()
+}
+
+func WithTryLockKey(key string, fn func() error) error {
+	l := For(key)
+	if !l.TryLock() {
+		return fmt.Errorf("try lock fail")
+	}
 	defer l.Unlock()
 	return fn()
 }

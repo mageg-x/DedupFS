@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -170,161 +169,84 @@ func collectFilesystemStats(mountPoint string, fs *dfs.DedupFS) map[string]inter
 		}
 	}
 
-	chunkConfig := "N/A"
-	blockConfig := "N/A"
-	if fs.ChunkConf != nil {
-		chunkConfig = fmt.Sprintf("AvgSize: %d, Min: %d, Max: %d",
-			fs.ChunkConf.AvgSize, fs.ChunkConf.MinSize, fs.ChunkConf.MaxSize)
+	// start async stats collection
+	fs.Stats()
+
+	// try to get latest stats from kvstore
+	stats, err := fs.GetStats()
+	if err != nil {
+		logger.Warnf("failed to retrieve statistics, using default values: %v", err)
+		return map[string]interface{}{
+			"mountPoint":         mountPoint,
+			"id":                 fs.ID,
+			"baseDir":            fs.BaseDir,
+			"metaDir":            fs.MetaDir,
+			"dataDir":            fs.DataDir,
+			"chunkConfig":        "N/A",
+			"blockConfig":        "N/A",
+			"fileCount":          float64(0),
+			"dirCount":           float64(0),
+			"spaceUsed":          float64(0),
+			"realSize":           float64(0),
+			"chunkCount":         float64(0),
+			"blockCount":         float64(0),
+			"refChunkCount":      float64(0),
+			"deduplicationRatio": 1.0,
+			"lastUpdated":        time.Now().Format(time.RFC3339),
+		}
 	}
-	if fs.BlockConf != nil {
+
+	// convert structured data to map format
+	result := map[string]interface{}{
+		"mountPoint":         stats.MountPoint,
+		"id":                 stats.ID,
+		"baseDir":            stats.BaseDir,
+		"metaDir":            stats.MetaDir,
+		"dataDir":            stats.DataDir,
+		"fileCount":          float64(stats.FileCount),
+		"dirCount":           float64(stats.DirCount),
+		"spaceUsed":          float64(stats.SpaceUsed),
+		"realSize":           float64(stats.RealSize),
+		"chunkCount":         float64(stats.ChunkCount),
+		"blockCount":         float64(stats.BlockCount),
+		"refChunkCount":      float64(stats.RefChunkCount),
+		"deduplicationRatio": stats.DeduplicationRatio,
+		"lastUpdated":        stats.LastUpdated.Format(time.RFC3339),
+	}
+
+	// process chunkconfig
+	if stats.ChunkConfig != nil {
+		result["chunkConfig"] = fmt.Sprintf("AvgSize: %d, Min: %d, Max: %d, Fixed: %v",
+			stats.ChunkConfig.AvgSize, stats.ChunkConfig.MinSize, stats.ChunkConfig.MaxSize, stats.ChunkConfig.FixedSize)
+	} else {
+		result["chunkConfig"] = "N/A"
+	}
+
+	// process blockconfig
+	if stats.BlockConfig != nil {
 		compressStr := "false"
 		encryptStr := "false"
-		if fs.BlockConf.Compress {
+		if stats.BlockConfig.Compress {
 			compressStr = "true"
 		}
-		if fs.BlockConf.Encrypt {
+		if stats.BlockConfig.Encrypt {
 			encryptStr = "true"
 		}
 		passwordStr := ""
-		if fs.BlockConf.Password != "" {
+		if stats.BlockConfig.Password != "" {
 			passwordStr = "******"
 		}
-		blockConfig = fmt.Sprintf("Size: %d, Compress: %s, Encrypt: %s, Password: %s",
-			fs.BlockConf.Size, compressStr, encryptStr, passwordStr)
+		result["blockConfig"] = fmt.Sprintf("Size: %d, Compress: %s, Encrypt: %s, Password: %s",
+			stats.BlockConfig.Size, compressStr, encryptStr, passwordStr)
+	} else {
+		result["blockConfig"] = "N/A"
 	}
 
-	stats := map[string]interface{}{
-		"mountPoint":         mountPoint,
-		"id":                 fs.ID,
-		"baseDir":            fs.BaseDir,
-		"metaDir":            fs.MetaDir,
-		"dataDir":            fs.DataDir,
-		"chunkConfig":        chunkConfig,
-		"blockConfig":        blockConfig,
-		"fileCount":          float64(0),
-		"dirCount":           float64(0),
-		"spaceUsed":          float64(0),
-		"realSize":           float64(0),
-		"chunkCount":         float64(0),
-		"blockCount":         float64(0),
-		"refChunkCount":      float64(0),
-		"deduplicationRatio": 1.0,
-		"lastUpdated":        time.Now().Format(time.RFC3339),
-	}
-
-	if fs.RootNode != nil {
-		fileCount, dirCount, totalSize, realSize, chunkCount, blockCount, refChunkCount := calculateNodeStats(fs)
-		stats["fileCount"] = float64(fileCount)
-		stats["dirCount"] = float64(dirCount)
-		stats["spaceUsed"] = float64(totalSize)
-		stats["realSize"] = float64(realSize)
-		stats["chunkCount"] = float64(chunkCount)
-		stats["blockCount"] = float64(blockCount)
-		stats["refChunkCount"] = float64(refChunkCount)
-		// 计算真实的重复数据删除率
-		var dedupRatio float64
-		if totalSize > 0 && realSize > 0 {
-			dedupRatio = (float64(totalSize)) / float64(realSize)
-		} else {
-			dedupRatio = 1.0
-		}
-		stats["deduplicationRatio"] = dedupRatio
-	}
-
-	return stats
+	return result
 }
 
-func calculateNodeStats(fs *dfs.DedupFS) (fileCount, dirCount int, totalSize uint64, realSize int64, chunkCount int, blockCount int, refChunkCount int) {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-
-	fileCount = 0
-	dirCount = 0
-	totalSize = 0
-	realSize = 0
-	chunkCount = 0
-
-	chunkMap := make(map[string]struct{})
-	blockMap := make(map[string]int64)
-
-	visited := make(map[uint64]bool)
-	queue := []uint64{1}
-	visited[1] = true
-	dirCount++
-
-	workers := 4
-	nodeChan := make(chan uint64, 100)
-	resultChan := make(chan struct{}, workers)
-
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for ino := range nodeChan {
-				inode, err := dfs.GetINode(fs, ino)
-				if err != nil || inode == nil {
-					resultChan <- struct{}{}
-					logger.Errorf("failed to get inode %d: %v", ino, err)
-					continue
-				}
-
-				mu.Lock()
-				chunkCount += len(inode.Chunks)
-				for _, chunk := range inode.Chunks {
-					chunkMap[chunk.Hash] = struct{}{}
-					if c, err := dfs.GetChunkMeta(chunk.Hash, fs); err == nil && c != nil {
-						if _, ok := blockMap[c.BlockID]; !ok {
-							if b, err := dfs.ReadBlockMeta(c.BlockID, fs.DataDir); err == nil && b != nil {
-								blockMap[c.BlockID] = b.Header.RealSize
-							} else {
-								logger.Errorf("failed to read block %s: %v", c.BlockID, err)
-							}
-						}
-					} else {
-						logger.Errorf("failed to get chunk %s meta: %v", chunk.Hash, err)
-					}
-				}
-				if inode.Kind == dfs.FileTypeFile || inode.Kind == dfs.FileTypeSymlink {
-					fileCount++
-					totalSize += inode.Size
-				} else if inode.Kind == dfs.FileTypeDir && ino != 1 {
-					dirCount++
-				}
-				mu.Unlock()
-
-				resultChan <- struct{}{}
-			}
-		}()
-	}
-
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-
-		nodeChan <- current
-		<-resultChan
-
-		if node, exists := fs.RootNode.Get(current); exists {
-			for _, child := range node.Children {
-				if !visited[child.ID] {
-					visited[child.ID] = true
-					queue = append(queue, child.ID)
-				}
-			}
-		}
-	}
-
-	close(nodeChan)
-	wg.Wait()
-
-	for _, size := range blockMap {
-		realSize += size
-	}
-	blockCount = len(blockMap)
-	refChunkCount = chunkCount - len(chunkMap)
-
-	return fileCount, dirCount, totalSize, realSize, chunkCount, blockCount, refChunkCount
-}
+// calculateNodeStats is no longer needed, implemented in common/dfs/stats.go
+// keep this function signature for compatibility
 
 func HandleStatsCommand(ctx context.Context, req *ipc.Request) *ipc.Response {
 	logger.Infof("Collecting statistics for all mounted filesystems")

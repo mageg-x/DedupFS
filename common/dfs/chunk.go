@@ -82,20 +82,21 @@ func NewChunk(data []byte) *Chunk {
 // GetChunkMeta 获取元数据（不含 Data）
 func GetChunkMeta(hash string, fs *DedupFS) (*Chunk, error) {
 	logger.Debugf("getting chunk meta for hash %s in filesystem %s", hash, fs.ID)
-	chunkKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
-	if chunk, ok := G_CHUNK_CACHE.Get(chunkKey); ok && chunk != nil {
+	cacheKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
+	if chunk, ok := G_CHUNK_CACHE.Get(cacheKey); ok && chunk != nil {
 		logger.Debugf("chunk meta %s found in cache", hash)
 		return chunk, nil
 	}
 
 	// 从 KVStore 读取
 	var chunk Chunk
+	chunkKey := fmt.Sprintf("chunk:%s", hash)
 	if err := fs.KVStore.Get(chunkKey, &chunk); err != nil {
 		logger.Warnf("chunk %s not found in kvstore", hash)
 		return nil, fmt.Errorf("chunk not found")
 	}
 
-	G_CHUNK_CACHE.Put(chunkKey, &chunk)
+	G_CHUNK_CACHE.Put(cacheKey, &chunk)
 	logger.Debugf("loaded chunk meta %s from kvstore", hash)
 
 	return &chunk, nil
@@ -149,8 +150,8 @@ func GetChunkData(hash string, fs *DedupFS) (*Chunk, error) {
 	}
 
 	chunk.Data = chunkData
-	chunkKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
-	G_CHUNK_CACHE.Put(chunkKey, chunk)
+	cacheKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
+	G_CHUNK_CACHE.Put(cacheKey, chunk)
 	logger.Debugf("successfully loaded chunk data for %s, size: %d bytes", hash, len(chunkData))
 
 	return chunk, nil
@@ -159,12 +160,13 @@ func GetChunkData(hash string, fs *DedupFS) (*Chunk, error) {
 // RemoveChunk 减引用计数，必要时删除
 func RemoveChunk(hash string, fs *DedupFS) error {
 	logger.Debugf("removing chunk %s from filesystem %s", hash, fs.ID)
-	chunkKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
+	chunkKey := fmt.Sprintf("chunk:%s", hash)
 	var chunk Chunk
 	if err := fs.KVStore.Get(chunkKey, &chunk); err != nil {
 		logger.Errorf("chunk %s not found for removal: %v", hash, err)
 		return fmt.Errorf("chunk not found")
 	}
+	cacheKey := fmt.Sprintf("chunk:%s:%s", fs.ID, hash)
 
 	chunk.RefCount--
 	logger.Debugf("chunk %s ref count decremented to %d", hash, chunk.RefCount)
@@ -181,7 +183,8 @@ func RemoveChunk(hash string, fs *DedupFS) error {
 			return err
 		}
 		// 清缓存
-		G_CHUNK_CACHE.Del(chunkKey)
+
+		G_CHUNK_CACHE.Del(cacheKey)
 		logger.Infof("chunk %s completely removed", hash)
 	} else {
 		// 更新引用计数
@@ -210,7 +213,7 @@ func PutChunks(chunks []*Chunk, fs *DedupFS) error {
 		}
 
 		// 从 KVStore 读取
-		chunkKey := fmt.Sprintf("chunk:%s:%s", fs.ID, chunk.Hash)
+		chunkKey := fmt.Sprintf("chunk:%s", chunk.Hash)
 		var c Chunk
 		var exist bool
 		if err := fs.KVStore.Get(chunkKey, &c); err != nil {
@@ -238,7 +241,8 @@ func PutChunks(chunks []*Chunk, fs *DedupFS) error {
 			return fmt.Errorf("failed to save chunk %s metadata: %w", chunk.Hash, err)
 		}
 
-		G_CHUNK_CACHE.Put(chunkKey, chunk)
+		cacheKey := fmt.Sprintf("chunk:%s:%s", fs.ID, chunk.Hash)
+		G_CHUNK_CACHE.Put(cacheKey, chunk)
 	}
 	return nil
 }

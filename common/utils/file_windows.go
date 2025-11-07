@@ -3,6 +3,7 @@
 package utils
 
 import (
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -97,4 +98,24 @@ func GetFsutilInfo(mountPoint string) (totalClusters, freeClusters, clustersPerM
 	}
 
 	return totalClusters, freeClusters, clustersPerMftRecord, bytesPerCluster, nil
+}
+
+func LockDirectory(path string) (*os.File, error) {
+	// Windows: 使用 CreateFileW 打开目录并加独占锁
+	p, _ := syscall.UTF16PtrFromString(path)
+	handle, err := syscall.CreateFile(
+		p,
+		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
+		0, // 禁止其他进程共享（关键！）
+		nil,
+		syscall.OPEN_EXISTING,
+		syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	file := os.NewFile(uintptr(handle), path)
+	return file, nil
 }

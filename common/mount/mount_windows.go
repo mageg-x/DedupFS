@@ -84,13 +84,37 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 	// host.SetCapCaseInsensitive(true) // 支持大小写不敏感
 	host.SetCapReaddirPlus(true) // 支持增强的目录读取
 
+	// 锁定目录
+	// if ld, err := utils.LockDirectory(sourceDir); err != nil {
+	// 	logger.Errorf("failed to lock source directory: %v", err)
+	// 	return fmt.Errorf("failed to lock source directory: %w", err)
+	// } else {
+	// 	defer ld.Close()
+	// }
+
 	// 配置挂载参数
 	opts := []string{
-		"Z:",
+		mountPoint,
 	}
 
 	fsys.Host = host
-	// 执行挂载
+
+	// 添加到已挂载目录列表并存储文件系统实例
+	utils.WithLock(&MountMutex, func() error {
+		MountMap[mountPoint] = fsys
+		return nil
+	})
+
+	defer func() {
+		// 确保在函数退出时停止 fuse 服务器
+		utils.WithLock(&MountMutex, func() error {
+			delete(MountMap, mountPoint)
+			return nil
+		})
+	}()
+
+	logger.Errorf("Mounting deduplicated file system at %s", mountPoint)
+	// 执行挂载， 会阻塞住
 	success := host.Mount("", opts)
 	if !success {
 		logger.Errorf("Failed to mount deduplicated file system at %s", mountPoint)
@@ -98,18 +122,11 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 		return syscall.EAGAIN // 或返回一个更具描述性的错误
 	}
 
-	logger.Info("successfully mounted file system")
-
-	// 添加到已挂载目录列表并存储文件系统实例
-	utils.WithLock(&MountMutex, func() error {
-		MountMap[mountPoint] = fsys
-		return nil
-	})
 	return nil
 }
 
 func Unmount(mountPoint string) error {
-	logger.Infof("Unmounting deduplicated file system at %s", mountPoint)
+	logger.Infof("unmounting deduplicated file system at %s", mountPoint)
 	// 从已挂载目录列表中移除
 	MountMutex.Lock()
 	defer MountMutex.Unlock()

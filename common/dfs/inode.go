@@ -655,8 +655,8 @@ func CacheINode(fs *DedupFS, inode *INode) error {
 		return fmt.Errorf("invalid param for cache node")
 	}
 
-	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
-	G_INODE_CACHE.Put(inodeKey, inode)
+	cacheKey := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
+	G_INODE_CACHE.Put(cacheKey, inode)
 
 	if len(inode.Chunks) > 0 {
 		// 如果chunks 的数据 大于 64M， 则将chunks数据缓存到磁盘中
@@ -738,13 +738,14 @@ func SaveINode(fs *DedupFS, inode *INode) error {
 	}
 	inode.DropChunks = []*INodeChunk{}
 
-	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
+	inodeKey := fmt.Sprintf("inode:%d", inode.Ino)
 	if err := fs.KVStore.Set(inodeKey, inode); err != nil {
 		logger.Errorf("failed to save inode %d: %v", inode.Ino, err)
 		return err
 	}
 
-	G_INODE_CACHE.Put(inodeKey, inode)
+	cacheKey := fmt.Sprintf("inode:%s:%d", fs.ID, inode.Ino)
+	G_INODE_CACHE.Put(cacheKey, inode)
 	logger.Debugf("inode %d saved successfully", inode.Ino)
 	return nil
 }
@@ -763,12 +764,13 @@ func FlushINode(fs *DedupFS, inode *INode) error {
 
 func GetINode(fs *DedupFS, ino uint64) (*INode, error) {
 	logger.Debugf("getting inode %d from filesystem %s", ino, fs.ID)
-	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
-	if inode, exists := G_INODE_CACHE.Get(inodeKey); exists && inode != nil {
+	cacheKey := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
+	if inode, exists := G_INODE_CACHE.Get(cacheKey); exists && inode != nil {
 		logger.Debugf("inode %d name %s size %d found in cache", inode.Ino, inode.Name, inode.Size)
 		return inode, nil
 	}
 	var inode *INode
+	inodeKey := fmt.Sprintf("inode:%d", ino)
 	err := fs.KVStore.Get(inodeKey, &inode)
 	if err != nil {
 		logger.Errorf("failed to get inode %d: %v", ino, err)
@@ -803,9 +805,10 @@ func DelINode(fs *DedupFS, ino uint64) error {
 		}
 	}
 
-	inodeKey := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
-	G_INODE_CACHE.Del(inodeKey)
+	cacheKey := fmt.Sprintf("inode:%s:%d", fs.ID, ino)
+	G_INODE_CACHE.Del(cacheKey)
 
+	inodeKey := fmt.Sprintf("inode:%d", ino)
 	if err := fs.KVStore.Del(inodeKey); err != nil {
 		logger.Errorf("failed to delete inode %d: %v", ino, err)
 		return err

@@ -10,7 +10,7 @@ import (
 	"github.com/mageg-x/dedupfs/common/log"
 )
 
-var logger = log.GetLogger("ipc")
+var logger = log.GetLogger("dedupfs")
 
 type Server struct {
 	path     string
@@ -40,6 +40,11 @@ func (s *Server) handleConn(ctx context.Context, conn Conn) {
 	enc := json.NewEncoder(conn)
 
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		var req Request
 		if err := dec.Decode(&req); err != nil {
 			if err != io.EOF {
@@ -69,6 +74,7 @@ func (s *Server) handleConn(ctx context.Context, conn Conn) {
 func (s *Server) Start(ctx context.Context) error {
 	listener, err := Listen(s.path)
 	if err != nil {
+		logger.Errorf("listen: %v", err)
 		return err
 	}
 	s.listener = listener
@@ -80,9 +86,15 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	for {
+		// 监听 ctx 是否取消
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		conn, err := listener.Accept()
 		if err != nil {
-			if s.closed {
+			if s.closed || ctx.Err() != nil {
 				return nil
 			}
 			return err

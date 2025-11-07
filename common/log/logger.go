@@ -280,7 +280,7 @@ func GetLogger(name string) *Logger {
 	// 判断 stdout 是否是终端（TTY）
 	isTerminal := term.IsTerminal(os.Stdout.Fd())
 	var output io.Writer
-	if isTerminal {
+	if isTerminal && runtime.GOOS != "windows" {
 		// 在终端中运行（Linux/macOS 终端，或 Windows 的 cmd/PowerShell）
 		output = io.MultiWriter(os.Stdout, fileWriter)
 	} else {

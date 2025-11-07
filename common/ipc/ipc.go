@@ -12,9 +12,9 @@ type Request struct {
 }
 
 type Response struct {
-	Ok   bool        `json:"ok"`
-	Msg  string      `json:"msg,omitempty"`
-	Data interface{} `json:"data,omitempty"`
+	Ok   bool   `json:"ok"`
+	Msg  string `json:"msg,omitempty"`
+	Data []byte `json:"data"`
 }
 
 type Handler func(ctx context.Context, req *Request) *Response
