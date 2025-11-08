@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/getlantern/systray"
+	"github.com/gofrs/flock"
 	"github.com/google/uuid"
+	"github.com/pkg/browser"
 	"github.com/sirupsen/logrus"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -533,7 +535,8 @@ func (a *App) Stats(id string) (*Stats, error) {
 			LastUpdated:      stats.LastUpdated.Local().Format("2006-01-02 15:04:05"),
 		}
 		mp.UsedSpace = int64(stats.SpaceUsed)
-		if _, _, space, err := utils.GetDiskFreeSpaceEx(mp.MountPath); err == nil {
+		if _, _, space, err := utils.GetDiskFreeSpaceEx(mp.DataDir); err == nil {
+			logger.Infof("get %s disk free space: %d", mp.DataDir, space)
 			mp.TotalSpace = int64(space) + mp.UsedSpace
 		}
 	}
@@ -552,11 +555,11 @@ func (a *App) IsWinFspInstalled() bool {
 
 // Cleanup 执行程序退出时的清理工作
 func (a *App) Cleanup() {
-	logger.Info("Starting cleanup process...")
+	logger.Info("starting cleanup process...")
 
 	// 先保存配置
 	if err := a.SaveConfig(); err != nil {
-		logger.Errorf("Failed to save config during cleanup: %v", err)
+		logger.Errorf("failed to save config during cleanup: %v", err)
 	}
 
 	// 卸载所有挂载点
@@ -567,19 +570,29 @@ func (a *App) Cleanup() {
 	command := exec.Command("taskkill", "/F", "/IM", "dedupfs-cli.exe")
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	command.Run()
-	logger.Info("Cleanup completed successfully")
+	logger.Info("cleanup completed successfully")
 }
 
 // 最小化窗口到托盘的方法
 func (a *App) HideWindow() {
-	logger.Info("Minimizing application to tray")
+	logger.Info("minimizing application to tray")
 	runtime.WindowHide(a.ctx)
 }
 
 // 显示应用窗口的方法
 func (a *App) ShowWindow() {
-	logger.Info("Showing application window")
+	logger.Info("showing application window")
 	runtime.WindowShow(a.ctx)
+}
+
+func (a *App) OpenURL(url string) error {
+	if err := browser.OpenURL(url); err != nil {
+		logger.Errorf("failed to open url: %v", err)
+		return err
+	} else {
+		logger.Info("opened url successfully")
+	}
+	return nil
 }
 
 // 托盘逻辑（同前）
@@ -609,14 +622,14 @@ func (a *App) onExit() {}
 
 // 真正退出应用的方法
 func (a *App) QuitApp() {
-	logger.Info("Quitting application")
+	logger.Info("quitting application")
 	a.Cleanup()
 	runtime.Quit(a.ctx)
 }
 
 // Gui 启动GUI模式
 func runGui() {
-	logger.Infof("Initializing GUI mode...")
+	logger.Infof("initializing gui mode...")
 
 	// 强制杀死所有 mount 进程
 	command := exec.Command("taskkill", "/F", "/IM", "dedupfs-cli.exe")
@@ -655,7 +668,7 @@ func runGui() {
 			return true // 阻止退出
 		},
 		OnShutdown: func(ctx context.Context) {
-			logger.Info("Application shutting down gracefully")
+			logger.Info("application shutting down gracefully")
 			app.Cleanup()
 			cancel()
 		},
@@ -669,7 +682,7 @@ func runGui() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
-		logger.Info("Received shutdown signal, cleaning up...")
+		logger.Info("received shutdown signal, cleaning up...")
 		app.Cleanup()
 		cancel()
 		// 在Windows环境下，使用os.Exit终止进程
@@ -678,14 +691,15 @@ func runGui() {
 
 	if err != nil {
 		// 发生错误时也执行清理
-		logger.Errorf("Failed to start application: %v", err)
+		logger.Errorf("failed to start application: %v", err)
 		app.Cleanup()
 		os.Exit(1)
 	}
-	logger.Info("Application exited")
+	logger.Info("application exited")
 }
 
 func main() {
+
 	// 获取程序安装目录，初始化日志
 	appDir, err := os.Executable()
 	if err != nil {
@@ -693,6 +707,13 @@ func main() {
 	} else {
 		appDir = filepath.Dir(appDir)
 	}
+
+	fileLock := flock.New(appDir + "/dedupfs.lock")
+	if ok, err := fileLock.TryLock(); !ok || err != nil {
+		logger.Errorf("another instance of dedupfs is already running.")
+		os.Exit(1)
+	}
+	defer fileLock.Unlock()
 
 	// 初始化日志系统
 	log.Init(&log.Config{

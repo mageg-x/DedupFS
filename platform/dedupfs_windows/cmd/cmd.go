@@ -143,7 +143,7 @@ func setLogLevel() {
 	logger.Debugf("verbose level: %d, log level: %s", verbose, level.String())
 }
 
-func mountAction(cmd *cobra.Command, args []string) error {
+func mountAction(_ *cobra.Command, args []string) error {
 	mountPoint := strings.ToUpper(args[0])
 	dataDir := args[1]
 
@@ -190,7 +190,7 @@ func mountAction(cmd *cobra.Command, args []string) error {
 }
 
 // unmountAction is the cobra action for unmount command
-func unmountAction(cmd *cobra.Command, args []string) error {
+func unmountAction(_ *cobra.Command, args []string) error {
 	mountPoint := strings.ToUpper(args[0])
 	logger.Infof("sending unmount request for %s", mountPoint)
 
@@ -202,7 +202,7 @@ func unmountAction(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func statsAction(cmd *cobra.Command, args []string) error {
+func statsAction(_ *cobra.Command, args []string) error {
 	logger.Info("collecting statistics for all mounted filesystems")
 	fsStats, err := ipccmd.InvokeStats(args[0])
 	if err != nil || fsStats == nil {

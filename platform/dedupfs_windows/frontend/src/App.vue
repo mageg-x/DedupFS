@@ -1,16 +1,16 @@
 <template>
-  <div id="app" class="app-container">   
+  <div id="app" class="app-container">
     <!-- 主要内容区域 -->
     <div class="main-content">
       <!-- 左侧挂载点列表 -->
       <div class="sidebar">
         <div class="sidebar-header">
-          <h3>挂载点列表</h3>
+          <h3>{{ t('mountPointList') }}</h3>
           <button @click="addMountPoint" class="add-button">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
             </svg>
-            <span>添加挂载点</span>
+            <span>{{ t('addMountPoint') }}</span>
           </button>
         </div>
 
@@ -18,9 +18,9 @@
           <div v-for="(item, index) in mountPoints" :key="item.id" @click="selectMountPoint(index)"
             class="mount-point-item" :class="{ 'selected': selectedIndex === index }">
             <div class="mount-point-header">
-              <div class="mount-point-name">{{ item.name || '未命名' }}</div>
+              <div class="mount-point-name">{{ item.name || t('unnamed') }}</div>
               <div class="mount-status" :class="{ 'mounted': item.isMounted }">
-                {{ item.isMounted ? '已挂载' : '未挂载' }}
+                {{ item.isMounted ? t('mounted') : t('notMounted') }}
               </div>
             </div>
             <div class="mount-point-path">{{ item.mountPath }}</div>
@@ -43,8 +43,8 @@
                 <line x1="10" y1="12" x2="14" y2="12"></line>
               </svg>
             </div>
-            <div class="empty-text">暂无挂载点</div>
-            <div class="empty-subtext">点击上方按钮添加新的挂载点</div>
+            <div class="empty-text">{{ t('noMountPoints') }}</div>
+            <div class="empty-subtext">{{ t('clickAddButton') }}</div>
           </div>
         </div>
       </div>
@@ -53,19 +53,55 @@
       <div class="content-area">
         <div v-if="selectedMountPoint" class="config-container">
           <!-- 标签页导航 -->
-          <div class="tabs">
-            <button v-for="tab in tabs" :key="tab.id" class="tab" :class="{ 'active': activeTab === tab.id }"
-              @click="activeTab = tab.id">
-              {{ tab.name }}
-            </button>
+          <div class="tabs-container">
+            <div class="tabs">
+              <button v-for="tab in tabs" :key="tab.id" class="tab" :class="{ 'active': activeTab === tab.id }"
+                @click="activeTab = tab.id">
+                {{ tab.name }}
+              </button>
+            </div>
+
+            <!-- 右侧功能图标 -->
+            <div class="header-actions">
+              <!-- 语言切换下拉菜单 -->
+              <div class="dropdown">
+                <button @click="showLanguageDropdown = !showLanguageDropdown" class="dropdown-toggle">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                    <path
+                      d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z">
+                    </path>
+                  </svg>
+                </button>
+                <div v-if="showLanguageDropdown" class="dropdown-menu">
+                  <div v-for="lang in languages" :key="lang.code" @click="changeLanguage(lang.code)"
+                    class="dropdown-item">
+                    <span class="flag-icon">{{ lang.flag }}</span>
+                    <span>{{ lang.name }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- GitHub 链接 -->
+              <a href="#" class="github-link" @click.prevent="openGitHub">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path
+                    d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22">
+                  </path>
+                </svg>
+              </a>
+            </div>
           </div>
 
           <!-- 基本配置 -->
           <div v-show="activeTab === 'basic'" class="tab-content">
             <div class="config-header">
               <div class="config-title">
-                <h2 class="truncate-text">{{ selectedMountPoint?.name || '挂载点配置' }}</h2>
-                <div class="config-subtitle">管理您的去重文件系统设置</div>
+                <h2 class="truncate-text">{{ selectedMountPoint?.name || t('mountPointConfig') }}</h2>
+                <div class="config-subtitle">{{ t('manageDedupFSSettings') }}</div>
               </div>
               <div class="action-buttons">
                 <button :disabled="!canMount || isLoading" @click="handleMountAction" class="action-button primary">
@@ -74,20 +110,20 @@
                       <circle class="loading-path" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"
                         fill="none" stroke-dasharray="56.54866776461628" stroke-linecap="round"></circle>
                     </svg>
-                    {{ selectedMountPoint?.isMounted ? '卸载中...' : '挂载中...' }}
+                    {{ selectedMountPoint?.isMounted ? t('unmounting') : t('mounting') }}
                   </span>
                   <span v-else-if="!selectedMountPoint?.isMounted">
                     <svg width="14" height="14" viewBox="0 0 16 20" fill="currentColor">
                       <path d="M8 6v12M2 12h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                     </svg>
-                    挂载
+                    {{ t('mount') }}
                   </span>
                   <span v-else>
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                       <line x1="4" y1="12" x2="12" y2="12" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round"></line>
                     </svg>
-                    卸载
+                    {{ t('unmount') }}
                   </span>
                 </button>
                 <button @click="saveMountPoint" class="action-button secondary"
@@ -98,7 +134,7 @@
                     <path d="M8 11a3 3 0 100-6 3 3 0 000 6z" fill="none" stroke="currentColor" stroke-width="1.5">
                     </path>
                   </svg>
-                  保存配置
+                  {{ t('saveConfig') }}
                 </button>
                 <button @click="deleteMountPoint" class="action-button danger" :disabled="selectedMountPoint.isMounted">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -109,7 +145,7 @@
                     <path d="M5 11h6v1a1 1 0 01-1 1H6a1 1 0 01-1-1v-1z" fill="none" stroke="currentColor"
                       stroke-width="1.5"></path>
                   </svg>
-                  删除
+                  {{ t('delete') }}
                 </button>
               </div>
             </div>
@@ -121,37 +157,36 @@
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                   <line x1="9" y1="3" x2="9" y2="21"></line>
                 </svg>
-                <h3 class="section-title">基本配置</h3>
+                <h3 class="section-title">{{ t('mountPointConfig') }}</h3>
               </div>
               <div class="form-grid">
                 <div class="form-group">
-                  <label class="form-label">挂载点名称</label>
-                  <input v-model="selectedMountPoint.name" class="form-input" placeholder="输入挂载点名称"
-                    :readonly="selectedMountPoint.isMounted" :class="{ 'readonly': selectedMountPoint.isMounted }">
+                  <label class="form-label">{{ t('mountPointName') }}</label>
+                  <input v-model="selectedMountPoint.name" class="form-input"
+                    placeholder="{{ t('inputMountPointName') }}" :readonly="selectedMountPoint.isMounted"
+                    :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label">挂载路径</label>
+                  <label class="form-label">{{ t('mountPath') }}</label>
                   <div class="input-with-button">
                     <select v-model="selectedMountPoint.mountPath" class="form-input"
                       :disabled="selectedMountPoint.isMounted" :class="{ 'readonly': selectedMountPoint.isMounted }">
-                      <option value="">请选择挂载盘符</option>
+                      <option value="">{{ t('selectDriveLetter') }}</option>
                       <option v-for="drive in availableDrives" :key="drive" :value="drive">{{ drive }}</option>
                     </select>
                   </div>
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label">数据目录</label>
+                  <label class="form-label">{{ t('dataDir') }}</label>
                   <div class="input-with-button">
-                    <input v-model="selectedMountPoint.dataDir" class="form-input" placeholder="输入数据目录"
+                    <input v-model="selectedMountPoint.dataDir" class="form-input" placeholder="{{ t('inputDataDir') }}"
                       :readonly="selectedMountPoint.isMounted" :class="{ 'readonly': selectedMountPoint.isMounted }">
-                    <button @click="browseDataDir" class="browse-button"
-                      :disabled="selectedMountPoint.isMounted">浏览...</button>
+                    <button @click="browseDataDir" class="browse-button" :disabled="selectedMountPoint.isMounted">{{
+                      t('browse') }}</button>
                   </div>
                 </div>
-
-
               </div>
             </div>
           </div>
@@ -168,35 +203,35 @@
                   <line x1="16" y1="17" x2="8" y2="17"></line>
                   <polyline points="10 9 9 9 8 9"></polyline>
                 </svg>
-                <h3 class="section-title">切片配置</h3>
+                <h3 class="section-title">{{ t('chunkConfig') }}</h3>
               </div>
               <div class="form-grid">
                 <div class="form-group">
                   <label class="form-label checkbox">
                     <input v-model="selectedMountPoint.chunkConfig.fixedSize" type="checkbox" class="checkbox-input"
                       :disabled="selectedMountPoint.isMounted">
-                    <span class="checkbox-label">固定长度切片</span>
+                    <span class="checkbox-label">{{ t('fixedSizeChunking') }}</span>
                   </label>
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label">最小切片大小 (KB)</label>
+                  <label class="form-label">{{ t('minChunkSize') }}</label>
                   <input v-model.number="selectedMountPoint.chunkConfig.minSize" type="number" class="form-input"
-                    placeholder="输入最小切片大小" :readonly="selectedMountPoint.isMounted"
+                    placeholder="{{ t('inputMinChunkSize') }}" :readonly="selectedMountPoint.isMounted"
                     :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label">平均切片大小 (KB)</label>
+                  <label class="form-label">{{ t('avgChunkSize') }}</label>
                   <input v-model.number="selectedMountPoint.chunkConfig.avgSize" type="number" class="form-input"
-                    placeholder="输入平均切片大小" :readonly="selectedMountPoint.isMounted"
+                    placeholder="{{ t('inputAvgChunkSize') }}" :readonly="selectedMountPoint.isMounted"
                     :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label">最大切片大小 (KB)</label>
+                  <label class="form-label">{{ t('maxChunkSize') }}</label>
                   <input v-model.number="selectedMountPoint.chunkConfig.maxSize" type="number" class="form-input"
-                    placeholder="输入最大切片大小" :readonly="selectedMountPoint.isMounted"
+                    placeholder="{{ t('inputMaxChunkSize') }}" :readonly="selectedMountPoint.isMounted"
                     :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
               </div>
@@ -214,13 +249,13 @@
                   <rect x="14" y="14" width="7" height="7"></rect>
                   <rect x="3" y="14" width="7" height="7"></rect>
                 </svg>
-                <h3 class="section-title">块配置</h3>
+                <h3 class="section-title">{{ t('blockConfig') }}</h3>
               </div>
               <div class="form-grid">
                 <div class="form-group">
-                  <label class="form-label">块大小 (MB)</label>
+                  <label class="form-label">{{ t('blockSize') }}</label>
                   <input v-model.number="selectedMountPoint.blockConfig.size" type="number" class="form-input"
-                    placeholder="输入块大小" :readonly="selectedMountPoint.isMounted"
+                    placeholder="{{ t('inputBlockSize') }}" :readonly="selectedMountPoint.isMounted"
                     :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
@@ -228,7 +263,7 @@
                   <label class="form-label checkbox">
                     <input v-model="selectedMountPoint.blockConfig.compress" type="checkbox" class="checkbox-input"
                       :disabled="selectedMountPoint.isMounted">
-                    <span class="checkbox-label">启用压缩</span>
+                    <span class="checkbox-label">{{ t('enableCompression') }}</span>
                   </label>
                 </div>
 
@@ -236,14 +271,14 @@
                   <label class="form-label checkbox">
                     <input v-model="selectedMountPoint.blockConfig.encrypt" type="checkbox" class="checkbox-input"
                       :disabled="selectedMountPoint.isMounted">
-                    <span class="checkbox-label">启用加密</span>
+                    <span class="checkbox-label">{{ t('enableEncryption') }}</span>
                   </label>
                 </div>
 
                 <div class="form-group" v-if="selectedMountPoint?.blockConfig?.encrypt">
-                  <label class="form-label">加密密码</label>
+                  <label class="form-label">{{ t('encryptionPassword') }}</label>
                   <input v-model="selectedMountPoint.blockConfig.password" type="password" class="form-input"
-                    placeholder="输入加密密码" :readonly="selectedMountPoint.isMounted"
+                    placeholder="{{ t('inputEncryptionPassword') }}" :readonly="selectedMountPoint.isMounted"
                     :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
               </div>
@@ -260,7 +295,7 @@
                   <line x1="12" y1="20" x2="12" y2="4"></line>
                   <line x1="6" y1="20" x2="6" y2="14"></line>
                 </svg>
-                <h3 class="section-title">统计信息</h3>
+                <h3 class="section-title">{{ t('statsInfo') }}</h3>
               </div>
               <div class="stats-grid">
                 <div class="stat-item">
@@ -273,7 +308,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">文件系统ID</div>
+                    <div class="stat-label">{{ t('fileSystemId') }}</div>
                     <div class="stat-value">{{ selectedMountPoint?.stats?.fsId || 'N/A' }}</div>
                   </div>
                 </div>
@@ -286,7 +321,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">基础目录</div>
+                    <div class="stat-label">{{ t('baseDir') }}</div>
                     <div class="stat-value">{{ selectedMountPoint?.stats?.baseDir || 'N/A' }}</div>
                   </div>
                 </div>
@@ -302,7 +337,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">文件数量</div>
+                    <div class="stat-label">{{ t('fileCount') }}</div>
                     <div class="stat-value">{{ selectedMountPoint?.stats?.files || 0 }}</div>
                   </div>
                 </div>
@@ -314,7 +349,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">目录数量</div>
+                    <div class="stat-label">{{ t('directoryCount') }}</div>
                     <div class="stat-value">{{ selectedMountPoint?.stats?.directories || 0 }}</div>
                   </div>
                 </div>
@@ -326,7 +361,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">原始大小</div>
+                    <div class="stat-label">{{ t('originalSize') }}</div>
                     <div class="stat-value">{{ formatSize(selectedMountPoint?.stats?.spaceUsed) }}</div>
                   </div>
                 </div>
@@ -340,7 +375,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">实际大小</div>
+                    <div class="stat-label">{{ t('actualSize') }}</div>
                     <div class="stat-value">{{ formatSize(selectedMountPoint?.stats?.realSize || 0) }}</div>
                   </div>
                 </div>
@@ -355,7 +390,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">总切片数</div>
+                    <div class="stat-label">{{ t('totalChunks') }}</div>
                     <div class="stat-value">{{ selectedMountPoint?.stats?.totalChunks || 0 }}</div>
                   </div>
                 </div>
@@ -368,7 +403,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">块数量</div>
+                    <div class="stat-label">{{ t('blockCount') }}</div>
                     <div class="stat-value">{{ selectedMountPoint?.stats?.blocks || 0 }}</div>
                   </div>
                 </div>
@@ -381,7 +416,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">引用的切片数</div>
+                    <div class="stat-label">{{ t('referencedChunks') }}</div>
                     <div class="stat-value">{{ selectedMountPoint?.stats?.referencedChunks || 0 }}</div>
                   </div>
                 </div>
@@ -394,7 +429,7 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">压缩比率</div>
+                    <div class="stat-label">{{ t('compressionRatio') }}</div>
                     <div class="stat-value">{{ (selectedMountPoint?.stats?.compressionRatio || 0).toFixed(2) }}x</div>
                   </div>
                 </div>
@@ -417,6 +452,7 @@
         </div>
       </div>
     </div>
+
     <!-- 通知组件 -->
     <div class="notifications-container">
       <div v-for="notification in notifications" :key="notification.id"
@@ -453,176 +489,380 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
-// 挂载点相关状态
+// ==================== 国际化相关 ====================
+const currentLang = ref('zh')
+const showLanguageDropdown = ref(false)
+
+const languages = [
+  { code: 'zh', name: '中文', flag: '🇨🇳' },
+  { code: 'en', name: 'English', flag: '🇺🇸' }
+]
+
+const messages = {
+  zh: {
+    // 通用
+    confirm: '确定',
+    cancel: '取消',
+    success: '成功',
+    error: '失败',
+    warning: '警告',
+    info: '信息',
+
+    // 挂载点管理
+    mountPointList: '挂载点列表',
+    addMountPoint: '添加挂载点',
+    unnamed: '未命名',
+    mounted: '已挂载',
+    notMounted: '未挂载',
+    noMountPoints: '暂无挂载点',
+    clickAddButton: '点击上方按钮添加新的挂载点',
+
+    // 标签页
+    basicConfig: '基本配置',
+    chunkConfig: '切片配置',
+    blockConfig: '块配置',
+    statsInfo: '统计信息',
+
+    // 基本配置
+    mountPointConfig: '挂载点配置',
+    manageDedupFSSettings: '管理您的去重文件系统设置',
+    mounting: '挂载中...',
+    unmounting: '卸载中...',
+    mount: '挂载',
+    unmount: '卸载',
+    saveConfig: '保存配置',
+    delete: '删除',
+    mountPointName: '挂载点名称',
+    inputMountPointName: '输入挂载点名称',
+    mountPath: '挂载路径',
+    selectDriveLetter: '请选择挂载盘符',
+    dataDir: '数据目录',
+    inputDataDir: '输入数据目录',
+    browse: '浏览...',
+
+    // 切片配置
+    fixedSizeChunking: '固定长度切片',
+    minChunkSize: '最小切片大小 (KB)',
+    inputMinChunkSize: '输入最小切片大小',
+    avgChunkSize: '平均切片大小 (KB)',
+    inputAvgChunkSize: '输入平均切片大小',
+    maxChunkSize: '最大切片大小 (KB)',
+    inputMaxChunkSize: '输入最大切片大小',
+
+    // 块配置
+    blockSize: '块大小 (MB)',
+    inputBlockSize: '输入块大小',
+    enableCompression: '启用压缩',
+    enableEncryption: '启用加密',
+    encryptionPassword: '加密密码',
+    inputEncryptionPassword: '输入加密密码',
+
+    // 统计信息
+    fileSystemId: '文件系统ID',
+    baseDir: '基础目录',
+    fileCount: '文件数量',
+    directoryCount: '目录数量',
+    originalSize: '原始大小',
+    actualSize: '实际大小',
+    totalChunks: '总切片数',
+    blockCount: '块数量',
+    referencedChunks: '引用的切片数',
+    compressionRatio: '压缩比率',
+
+    // 通知和对话框
+    configSaved: '配置已保存',
+    confirmDelete: '确认删除',
+    confirmDeleteMountPoint: '确定要删除此挂载点吗？',
+    mountSuccess: '挂载成功',
+    unmountSuccess: '卸载成功',
+    mountFailed: '挂载失败',
+    unmountFailed: '卸载失败',
+    loadMountPointsFailed: '加载挂载点失败',
+    addMountPointFailed: '添加挂载点失败',
+    saveConfigFailed: '保存配置失败',
+    deleteFailed: '删除失败',
+    pleaseSelectOrCreateMountPoint: '请先选择或创建挂载点',
+    selectDataDir: '选择数据目录',
+    selectDirFailed: '选择目录失败',
+
+    // 语言切换
+    language: '语言',
+    chinese: '中文',
+    english: '英文'
+  },
+  en: {
+    // Common
+    confirm: 'Confirm',
+    cancel: 'Cancel',
+    success: 'Success',
+    error: 'Error',
+    warning: 'Warning',
+    info: 'Info',
+
+    // Mount Point Management
+    mountPointList: 'Mount Points',
+    addMountPoint: 'Add Mount Point',
+    unnamed: 'Unnamed',
+    mounted: 'Mounted',
+    notMounted: 'Not Mounted',
+    noMountPoints: 'No Mount Points',
+    clickAddButton: 'Click the button above to add a new mount point',
+
+    // Tabs
+    basicConfig: 'Basic Config',
+    chunkConfig: 'Chunk Config',
+    blockConfig: 'Block Config',
+    statsInfo: 'Statistics',
+
+    // Basic Config
+    mountPointConfig: 'Mount Point Config',
+    manageDedupFSSettings: 'Manage your deduplicated file system settings',
+    mounting: 'Mounting...',
+    unmounting: 'Unmounting...',
+    mount: 'Mount',
+    unmount: 'Unmount',
+    saveConfig: 'Save',
+    delete: 'Delete',
+    mountPointName: 'Mount Point Name',
+    inputMountPointName: 'Enter mount point name',
+    mountPath: 'Mount Path',
+    selectDriveLetter: 'Select drive letter',
+    dataDir: 'Data Directory',
+    inputDataDir: 'Enter data directory',
+    browse: 'Browse...',
+
+    // Chunk Config
+    fixedSizeChunking: 'Fixed Size Chunking',
+    minChunkSize: 'Minimum Chunk Size (KB)',
+    inputMinChunkSize: 'Enter minimum chunk size',
+    avgChunkSize: 'Average Chunk Size (KB)',
+    inputAvgChunkSize: 'Enter average chunk size',
+    maxChunkSize: 'Maximum Chunk Size (KB)',
+    inputMaxChunkSize: 'Enter maximum chunk size',
+
+    // Block Config
+    blockSize: 'Block Size (MB)',
+    inputBlockSize: 'Enter block size',
+    enableCompression: 'Enable Compression',
+    enableEncryption: 'Enable Encryption',
+    encryptionPassword: 'Encryption Password',
+    inputEncryptionPassword: 'Enter encryption password',
+
+    // Statistics
+    fileSystemId: 'File System ID',
+    baseDir: 'Base Directory',
+    fileCount: 'File Count',
+    directoryCount: 'Directory Count',
+    originalSize: 'Original Size',
+    actualSize: 'Actual Size',
+    totalChunks: 'Total Chunks',
+    blockCount: 'Block Count',
+    referencedChunks: 'Referenced Chunks',
+    compressionRatio: 'Compression Ratio',
+
+    // Notifications and Dialogs
+    configSaved: 'Configuration saved',
+    confirmDelete: 'Confirm Delete',
+    confirmDeleteMountPoint: 'Are you sure you want to delete this mount point?',
+    mountSuccess: 'Mount successful',
+    unmountSuccess: 'Unmount successful',
+    mountFailed: 'Mount failed',
+    unmountFailed: 'Unmount failed',
+    loadMountPointsFailed: 'Failed to load mount points',
+    addMountPointFailed: 'Failed to add mount point',
+    saveConfigFailed: 'Failed to save configuration',
+    deleteFailed: 'Deletion failed',
+    pleaseSelectOrCreateMountPoint: 'Please select or create a mount point first',
+    selectDataDir: 'Select Data Directory',
+    selectDirFailed: 'Failed to select directory',
+
+    // Language Switch
+    language: 'Language',
+    chinese: '中文',
+    english: 'English'
+  }
+}
+
+const t = (key) => {
+  return messages[currentLang.value][key] || key
+}
+
+const changeLanguage = (lang) => {
+  currentLang.value = lang
+  showLanguageDropdown.value = false
+  updateTabNames()
+}
+
+// ==================== 挂载点数据相关 ====================
 const mountPoints = ref([])
 const selectedIndex = ref(-1)
 const selectedMountPoint = ref(null)
-const isLoading = ref(false)
-const activeTab = ref('basic')
-const tabs = ref([
-  { id: 'basic', name: '基本配置' },
-  { id: 'chunk', name: '切片配置' },
-  { id: 'block', name: '块配置' },
-  { id: 'stats', name: '统计信息' }
-])
 const availableDrives = ref(
   Array.from({ length: 23 }, (_, i) => String.fromCharCode(68 + i) + ':')
 )
 
-// 计算属性
-const canMount = computed(() => {
-  return selectedMountPoint.value &&
-    selectedMountPoint.value.mountPath &&
-    selectedMountPoint.value.dataDir
-})
-
-// 方法定义
-// 加载挂载点统计信息
-const loadMountPointStats = async () => {
-  if (!selectedMountPoint.value || !selectedMountPoint.value.isMounted) return
-  
-  try {
-    const stats = await window.go.main.App.Stats(selectedMountPoint.value.id)
-    if (stats) {
-      // 更新选中挂载点的统计信息
-      selectedMountPoint.value.stats = stats
-      
-      // 同时更新mountPoints数组中的对应项
-      const index = mountPoints.value.findIndex(mp => mp.id === selectedMountPoint.value.id)
-      if (index !== -1) {
-        mountPoints.value[index].stats = stats
-      }
-    }
-  } catch (error) {
-      console.error('获取统计信息失败:', error)
-      // 静默失败，不显示通知以避免打扰用户
-  }
-}
-
-// 监听activeTab变化，切换到统计信息标签时加载最新统计数据
-watch(activeTab, (newTab, oldTab) => {
-  if (newTab === 'stats') {
-    loadMountPointStats()
-  }
-})
-
 const loadMountPoints = async () => {
   try {
-    // 调用后端GetMountPoints方法
     mountPoints.value = await window.go.main.App.GetMountPoints()
   } catch (error) {
-    showNotification('加载挂载点失败: ' + error.message, 'error')
+    showNotification(t('loadMountPointsFailed') + ': ' + error.message, 'error')
     console.error('加载挂载点失败:', error)
   }
 }
 
 const selectMountPoint = (index) => {
   selectedIndex.value = index
-  // 创建副本以避免直接修改源数据
   selectedMountPoint.value = JSON.parse(JSON.stringify(mountPoints.value[index]))
-  // 切换到基本配置标签
   activeTab.value = 'basic'
 }
 
 const addMountPoint = async () => {
   try {
     let newMountPoint = await window.go.main.App.CreateDefaultConfig()
-    // 看看 mountPoints 中是否已经存在同名的挂载点
+    newMountPoint.name = t('unnamed')
     if (mountPoints.value.some(mp => mp.name === newMountPoint.name)) {
       return
     }
-    // 添加到 mountPoints 中
     mountPoints.value.push(newMountPoint)
     selectMountPoint(mountPoints.value.length - 1)
   } catch (error) {
-    showNotification('添加挂载点失败: ' + error.message, 'error')
+    showNotification(t('addMountPointFailed') + ': ' + error.message, 'error')
     console.error('添加挂载点失败:', error)
-  }
-}
-
-const saveMountPoint = async () => {
-  if (!selectedMountPoint.value) return
-
-  try {
-    // 调用后端SaveMountPoint方法
-    await window.go.main.App.SaveMountPoint(selectedMountPoint.value)
-    // 重新加载挂载点列表
-    await loadMountPoints()
-    // 重新选中当前挂载点
-    selectMountPoint(selectedIndex.value)
-    showNotification('配置已保存', 'success')
-  } catch (error) {
-    showNotification('保存配置失败: ' + error.message, 'error')
-    console.error('保存配置失败:', error)
   }
 }
 
 const deleteMountPoint = async () => {
   if (selectedIndex.value < 0) return
 
-  showConfirmDialog('确认删除', '确定要删除此挂载点吗？',
+  showConfirmDialog(t('confirmDelete'), t('confirmDeleteMountPoint'),
     async () => {
-      // 确认删除后的逻辑
       try {
-        // 调用后端DeleteMountPoint方法
         await window.go.main.App.DeleteMountPoint(selectedMountPoint.value.id)
-        // 刷新挂载点列表
         await loadMountPoints()
-        // 清空选中状态
         selectedMountPoint.value = null
         selectedIndex.value = -1
-        // 显示删除成功通知
-        showNotification('删除成功', 'success')
+        showNotification(t('success'), 'success')
       } catch (error) {
-        // 显示删除失败通知
-        showNotification(`删除失败: ${error.message}`, 'error')
+        showNotification(t('deleteFailed') + ': ' + error.message, 'error')
       }
     }
   )
 }
 
+// ==================== 挂载/卸载相关 ====================
+const isLoading = ref(false)
+const canMount = computed(() => {
+  return selectedMountPoint.value &&
+    selectedMountPoint.value.mountPath &&
+    selectedMountPoint.value.dataDir
+})
+
 const handleMountAction = async () => {
   if (!selectedMountPoint.value) return
-  let result = selectedMountPoint.value.isMounted ? '卸载' : '挂载'
+  let result = selectedMountPoint.value.isMounted ? t('unmount') : t('mount')
 
-  // 记录开始时间
   const startTime = Date.now()
-
   try {
-    // 设置加载状态
     isLoading.value = true
 
-    // 修复逻辑：isMounted为true时应调用Unmount，否则调用Mount
     if (selectedMountPoint.value.isMounted) {
-      // 调用后端Unmount方法
       await window.go.main.App.Unmount(selectedMountPoint.value.id)
     } else {
       await window.go.main.App.AddMountPoint(selectedMountPoint.value)
-      // 调用后端Mount方法
       await window.go.main.App.Mount(selectedMountPoint.value.id)
     }
 
-    // 计算已用时间
     const elapsedTime = Date.now() - startTime
-    // 确保至少等待3秒
     if (elapsedTime < 3000) {
       await new Promise(resolve => setTimeout(resolve, 3000 - elapsedTime))
     }
 
-    // 重新加载挂载点列表以更新状态
     await loadMountPoints()
-    // 重新选中当前挂载点
     selectMountPoint(selectedIndex.value)
-    showNotification(result + "成功", 'success')
+    showNotification(result + t('success'), 'success')
   } catch (error) {
-    showNotification(result + '失败', 'error')
-    console.error(result + '失败', error)
+    showNotification(result + t('error'), 'error')
+    console.error(result + t('error'), error)
   } finally {
-    // 清除加载状态
     isLoading.value = false
   }
 }
 
+// ==================== 配置保存相关 ====================
+const saveMountPoint = async () => {
+  if (!selectedMountPoint.value) return
+
+  try {
+    await window.go.main.App.SaveMountPoint(selectedMountPoint.value)
+    await loadMountPoints()
+    selectMountPoint(selectedIndex.value)
+    showNotification(t('configSaved'), 'success')
+  } catch (error) {
+    showNotification(t('saveConfigFailed') + ': ' + error.message, 'error')
+    console.error('保存配置失败:', error)
+  }
+}
+
+const browseDataDir = async () => {
+  if (!selectedMountPoint.value) {
+    showNotification(t('pleaseSelectOrCreateMountPoint'), 'warning')
+    return
+  }
+
+  try {
+    const dir = await window.go.main.App.BrowseDataDir(t('selectDataDir'), selectedMountPoint.value.dataDir || '')
+    if (dir) {
+      selectedMountPoint.value.dataDir = dir
+    }
+  } catch (error) {
+    showNotification(t('selectDirFailed') + ': ' + error.message, 'error')
+    console.error('选择目录失败:', error)
+  }
+}
+
+// ==================== 标签页相关 ====================
+const activeTab = ref('basic')
+const tabs = ref([
+  { id: 'basic', name: t('basicConfig') },
+  { id: 'chunk', name: t('chunkConfig') },
+  { id: 'block', name: t('blockConfig') },
+  { id: 'stats', name: t('statsInfo') }
+])
+
+const updateTabNames = () => {
+  tabs.value = [
+    { id: 'basic', name: t('basicConfig') },
+    { id: 'chunk', name: t('chunkConfig') },
+    { id: 'block', name: t('blockConfig') },
+    { id: 'stats', name: t('statsInfo') }
+  ]
+}
+
+// ==================== 统计信息相关 ====================
+const loadMountPointStats = async () => {
+  if (!selectedMountPoint.value || !selectedMountPoint.value.isMounted) return
+
+  try {
+    const stats = await window.go.main.App.Stats(selectedMountPoint.value.id)
+    if (stats) {
+      selectedMountPoint.value.stats = stats
+      const index = mountPoints.value.findIndex(mp => mp.id === selectedMountPoint.value.id)
+      if (index !== -1) {
+        mountPoints.value[index].stats = stats
+      }
+    }
+  } catch (error) {
+    console.error('获取统计信息失败:', error)
+  }
+}
+
+watch(activeTab, (newTab, oldTab) => {
+  if (newTab === 'stats') {
+    loadMountPointStats()
+  }
+})
+
+// ==================== 工具函数 ====================
 const formatSize = (bytes) => {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -633,41 +873,51 @@ const formatSize = (bytes) => {
 
 const getStoragePercent = (mountPoint) => {
   if (!mountPoint.totalSpace || mountPoint.totalSpace === 0) return 0
-  return Math.min((mountPoint.UsedSpace / mountPoint.totalSpace) * 100, 100)
+  return Math.min((mountPoint.usedSpace / mountPoint.totalSpace) * 100, 100)
 }
 
+// ==================== 通知系统 ====================
+const notifications = ref([])
 
-const browseDataDir = async () => {
-  if (!selectedMountPoint.value) {
-    showNotification('请先选择或创建挂载点', 'warning')
-    return
-  }
+const showNotification = (message, type = 'info') => {
+  const id = Date.now()
+  notifications.value.push({
+    id,
+    message,
+    type
+  })
 
-  try {
-    const dir = await window.go.main.App.BrowseDataDir('选择数据目录', selectedMountPoint.value.dataDir || '')
-    if (dir) {
-      selectedMountPoint.value.dataDir = dir
-    }
-  } catch (error) {
-    showNotification('选择目录失败: ' + error.message, 'error')
-    console.error('选择目录失败:', error)
+  setTimeout(() => {
+    removeNotification(id)
+  }, 3000)
+
+  console.log(`[${type.toUpperCase()}] ${message}`)
+}
+
+const removeNotification = (id) => {
+  const index = notifications.value.findIndex(n => n.id === id)
+  if (index > -1) {
+    notifications.value.splice(index, 1)
   }
 }
 
+const truncateText = (text, maxLength) => {
+  if (!text) return ''
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text
+}
 
-// 对话框状态
+// ==================== 对话框系统 ====================
 const dialog = ref({
   visible: false,
   title: '',
   message: '',
-  confirmText: '确定',
-  cancelText: '取消',
+  confirmText: t('confirm'),
+  cancelText: t('cancel'),
   onConfirm: null,
   onCancel: null
 })
 
-// 显示确认对话框
-const showConfirmDialog = (title, message, onConfirm, onCancel = null, confirmText = '确定', cancelText = '取消') => {
+const showConfirmDialog = (title, message, onConfirm, onCancel = null, confirmText = t('confirm'), cancelText = t('cancel')) => {
   dialog.value = {
     visible: true,
     title,
@@ -679,7 +929,6 @@ const showConfirmDialog = (title, message, onConfirm, onCancel = null, confirmTe
   }
 }
 
-// 处理对话框确认
 const handleDialogConfirm = () => {
   if (dialog.value.onConfirm && typeof dialog.value.onConfirm === 'function') {
     dialog.value.onConfirm()
@@ -687,7 +936,6 @@ const handleDialogConfirm = () => {
   dialog.value.visible = false
 }
 
-// 处理对话框取消
 const handleDialogCancel = () => {
   if (dialog.value.onCancel && typeof dialog.value.onCancel === 'function') {
     dialog.value.onCancel()
@@ -695,56 +943,18 @@ const handleDialogCancel = () => {
   dialog.value.visible = false
 }
 
-// 通知列表
-const notifications = ref([])
-
-// 移除通知的函数
-const removeNotification = (id) => {
-  const index = notifications.value.findIndex(n => n.id === id)
-  if (index > -1) {
-    notifications.value.splice(index, 1)
-  }
-}
-
-// 截断文本的函数
-const truncateText = (text, maxLength) => {
-  if (!text) return ''
-  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text
-}
-
-const showNotification = (message, type = 'info') => {
-  // 创建通知对象
-  const id = Date.now()
-  notifications.value.push({
-    id,
-    message,
-    type
-  })
-
-  // 3秒后自动关闭通知
-  setTimeout(() => {
-    removeNotification(id)
-  }, 3000)
-
-  console.log(`[${type.toUpperCase()}] ${message}`)
-}
+// ==================== 状态检查 ====================
+let statusCheckInterval = null
 
 const checkMountPointStatus = async () => {
-  // 启动定时检查挂载点状态的定时器
-  const statusCheckInterval = setInterval(async () => {
+  statusCheckInterval = setInterval(async () => {
     try {
-      // 遍历所有挂载点
       for (let i = 0; i < mountPoints.value.length; i++) {
         const currentMP = mountPoints.value[i]
-        // 调用后端GetMountPoint方法获取最新状态
         const updatedMP = await window.go.main.App.GetMountPoint(currentMP.id)
 
-        // 更新挂载点状态
         if (updatedMP && updatedMP.isMounted !== currentMP.isMounted) {
-          // 直接更新isMounted属性
           currentMP.isMounted = updatedMP.isMounted
-
-          // 如果当前选中的是这个挂载点，也要更新selectedMountPoint
           if (selectedIndex.value === i) {
             selectedMountPoint.value.isMounted = updatedMP.isMounted
           }
@@ -753,18 +963,28 @@ const checkMountPointStatus = async () => {
     } catch (error) {
       console.error('定时检查挂载点状态失败:', error)
     }
-  }, 1000) // 每秒检查一次
+  }, 1000)
 }
 
-// 组件挂载后从后端加载挂载点数据
+// ==================== 外部链接 ====================
+const openGitHub = async () => {
+  try {
+    await window.go.main.App.OpenURL('https://github.com/mageg-x/DedupFS')
+  } catch (error) {
+    console.error('Failed to open URL:', error)
+  }
+}
+
+// ==================== 生命周期 ====================
 onMounted(async () => {
   loadMountPoints()
   checkMountPointStatus()
 })
 
-// 组件卸载时清理定时器
 onUnmounted(() => {
-  clearInterval(statusCheckInterval)
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval)
+  }
 })
 </script>
 
@@ -784,7 +1004,6 @@ body {
   width: 100%;
   height: 100%;
   overflow: auto;
-  /* 确保根应用容器也不滚动 */
   background: rgba(15, 23, 42, 0.5);
 }
 
@@ -797,7 +1016,6 @@ select.form-input.readonly {
   border-color: #334155;
 }
 
-/* 禁用状态增强样式 */
 .form-input[readonly],
 select.form-input:disabled,
 .checkbox-input:disabled+.checkbox-label {
@@ -809,7 +1027,6 @@ select.form-input:disabled,
   opacity: 0.6;
 }
 
-/* 按钮禁用状态增强 */
 .action-button:disabled,
 .browse-button:disabled {
   opacity: 0.6;
@@ -823,65 +1040,6 @@ select.form-input:disabled,
   flex-direction: column;
   background: #0f172a;
   color: #e2e8f0;
-}
-
-/* 标题栏 */
-.title-bar {
-  background: rgba(15, 23, 42, 0.9);
-  padding: 6px 12px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid rgba(71, 85, 105, 0.3);
-  flex-shrink: 0;
-  height: 36px;
-}
-
-.title-bar-content {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #60a5fa;
-}
-
-.title {
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: 0.5px;
-  color: #60a5fa;
-}
-
-.title-bar-controls {
-  display: flex;
-  gap: 4px;
-}
-
-.window-button {
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-}
-
-.window-button:hover {
-  background-color: rgba(100, 116, 139, 0.2);
-}
-
-.window-button.close:hover {
-  background-color: #ef4444;
-  color: white;
 }
 
 /* 主要内容区域 */
@@ -1251,6 +1409,111 @@ select.form-input:disabled,
   color: #64748b;
 }
 
+/* 标签页容器 */
+.tabs-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: -18px;
+}
+
+.header-actions .dropdown {
+  position: relative;
+}
+
+.header-actions .dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  bottom: auto;
+  left: auto;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+/* 下拉菜单样式 */
+.dropdown {
+  position: relative;
+}
+
+.dropdown-toggle {
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.dropdown-toggle:hover {
+  background-color: rgba(100, 116, 139, 0.2);
+}
+
+.dropdown-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  margin-bottom: 8px;
+  min-width: 100px;
+  z-index: 20;
+}
+
+.dropdown-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #cbd5e1;
+  font-size: 12px;
+  transition: background-color 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dropdown-item:hover {
+  background-color: rgba(59, 130, 246, 0.2);
+}
+
+.flag-icon {
+  display: inline-block;
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+  margin-right: 8px;
+  line-height: 1;
+}
+
+/* GitHub链接样式 */
+.github-link {
+  color: #cbd5e1;
+  text-decoration: none;
+  padding: 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.github-link:hover {
+  background-color: rgba(100, 116, 139, 0.2);
+  color: #e2e8f0;
+}
+
 /* 内容区域 */
 .content-area {
   height: 100%;
@@ -1278,7 +1541,6 @@ select.form-input:disabled,
 .config-title {
   flex: 1;
   min-width: 0;
-  /* 重要：允许flex子元素缩小 */
   margin-right: 16px;
 }
 
@@ -1291,7 +1553,6 @@ select.form-input:disabled,
 
 .action-buttons {
   flex-shrink: 0;
-  /* 防止按钮区域被压缩 */
 }
 
 .config-title h2 {
@@ -1389,13 +1650,6 @@ select.form-input:disabled,
 .action-button.danger:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 8px rgba(220, 38, 38, 0.3);
-}
-
-.action-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
 /* 配置区域 */
