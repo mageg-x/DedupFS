@@ -1,5 +1,5 @@
 <template>
-  <div id="app" class="app-container">
+  <div id="app" class="app-container">   
     <!-- 主要内容区域 -->
     <div class="main-content">
       <!-- 左侧挂载点列表 -->
@@ -71,7 +71,8 @@
                 <button :disabled="!canMount || isLoading" @click="handleMountAction" class="action-button primary">
                   <span v-if="isLoading" class="loading-indicator">
                     <svg class="loading-spinner" width="14" height="14" viewBox="0 0 24 24">
-                      <circle class="loading-path" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="56.54866776461628" stroke-linecap="round"></circle>
+                      <circle class="loading-path" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"
+                        fill="none" stroke-dasharray="56.54866776461628" stroke-linecap="round"></circle>
                     </svg>
                     {{ selectedMountPoint?.isMounted ? '卸载中...' : '挂载中...' }}
                   </span>
@@ -89,7 +90,8 @@
                     卸载
                   </span>
                 </button>
-                <button @click="saveMountPoint" class="action-button secondary">
+                <button @click="saveMountPoint" class="action-button secondary"
+                  :disabled="selectedMountPoint.isMounted">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                     <path d="M2 12.5V14a1 1 0 001 1h10a1 1 0 001-1v-1.5L8.5 8.5 2 15z" fill="none" stroke="currentColor"
                       stroke-width="1.5"></path>
@@ -98,7 +100,7 @@
                   </svg>
                   保存配置
                 </button>
-                <button @click="deleteMountPoint" class="action-button danger">
+                <button @click="deleteMountPoint" class="action-button danger" :disabled="selectedMountPoint.isMounted">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                     <polyline points="3 5 5 5 11 5 13 5" stroke="currentColor" stroke-width="1.5"
                       stroke-linecap="round"></polyline>
@@ -124,13 +126,15 @@
               <div class="form-grid">
                 <div class="form-group">
                   <label class="form-label">挂载点名称</label>
-                  <input v-model="selectedMountPoint.name" class="form-input" placeholder="输入挂载点名称">
+                  <input v-model="selectedMountPoint.name" class="form-input" placeholder="输入挂载点名称"
+                    :readonly="selectedMountPoint.isMounted" :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
                 <div class="form-group">
                   <label class="form-label">挂载路径</label>
                   <div class="input-with-button">
-                    <select v-model="selectedMountPoint.mountPath" class="form-input">
+                    <select v-model="selectedMountPoint.mountPath" class="form-input"
+                      :disabled="selectedMountPoint.isMounted" :class="{ 'readonly': selectedMountPoint.isMounted }">
                       <option value="">请选择挂载盘符</option>
                       <option v-for="drive in availableDrives" :key="drive" :value="drive">{{ drive }}</option>
                     </select>
@@ -140,8 +144,10 @@
                 <div class="form-group">
                   <label class="form-label">数据目录</label>
                   <div class="input-with-button">
-                    <input v-model="selectedMountPoint.dataDir" class="form-input" placeholder="输入数据目录">
-                    <button @click="browseDataDir" class="browse-button">浏览...</button>
+                    <input v-model="selectedMountPoint.dataDir" class="form-input" placeholder="输入数据目录"
+                      :readonly="selectedMountPoint.isMounted" :class="{ 'readonly': selectedMountPoint.isMounted }">
+                    <button @click="browseDataDir" class="browse-button"
+                      :disabled="selectedMountPoint.isMounted">浏览...</button>
                   </div>
                 </div>
 
@@ -167,7 +173,8 @@
               <div class="form-grid">
                 <div class="form-group">
                   <label class="form-label checkbox">
-                    <input v-model="selectedMountPoint.chunkConfig.fixedSize" type="checkbox" class="checkbox-input">
+                    <input v-model="selectedMountPoint.chunkConfig.fixedSize" type="checkbox" class="checkbox-input"
+                      :disabled="selectedMountPoint.isMounted">
                     <span class="checkbox-label">固定长度切片</span>
                   </label>
                 </div>
@@ -175,19 +182,22 @@
                 <div class="form-group">
                   <label class="form-label">最小切片大小 (KB)</label>
                   <input v-model.number="selectedMountPoint.chunkConfig.minSize" type="number" class="form-input"
-                    placeholder="输入最小切片大小">
+                    placeholder="输入最小切片大小" :readonly="selectedMountPoint.isMounted"
+                    :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
                 <div class="form-group">
                   <label class="form-label">平均切片大小 (KB)</label>
                   <input v-model.number="selectedMountPoint.chunkConfig.avgSize" type="number" class="form-input"
-                    placeholder="输入平均切片大小">
+                    placeholder="输入平均切片大小" :readonly="selectedMountPoint.isMounted"
+                    :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
                 <div class="form-group">
                   <label class="form-label">最大切片大小 (KB)</label>
                   <input v-model.number="selectedMountPoint.chunkConfig.maxSize" type="number" class="form-input"
-                    placeholder="输入最大切片大小">
+                    placeholder="输入最大切片大小" :readonly="selectedMountPoint.isMounted"
+                    :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
               </div>
             </div>
@@ -208,21 +218,24 @@
               </div>
               <div class="form-grid">
                 <div class="form-group">
-                  <label class="form-label">块大小 (KB)</label>
+                  <label class="form-label">块大小 (MB)</label>
                   <input v-model.number="selectedMountPoint.blockConfig.size" type="number" class="form-input"
-                    placeholder="输入块大小">
+                    placeholder="输入块大小" :readonly="selectedMountPoint.isMounted"
+                    :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
 
                 <div class="form-group">
                   <label class="form-label checkbox">
-                    <input v-model="selectedMountPoint.blockConfig.compress" type="checkbox" class="checkbox-input">
+                    <input v-model="selectedMountPoint.blockConfig.compress" type="checkbox" class="checkbox-input"
+                      :disabled="selectedMountPoint.isMounted">
                     <span class="checkbox-label">启用压缩</span>
                   </label>
                 </div>
 
                 <div class="form-group">
                   <label class="form-label checkbox">
-                    <input v-model="selectedMountPoint.blockConfig.encrypt" type="checkbox" class="checkbox-input">
+                    <input v-model="selectedMountPoint.blockConfig.encrypt" type="checkbox" class="checkbox-input"
+                      :disabled="selectedMountPoint.isMounted">
                     <span class="checkbox-label">启用加密</span>
                   </label>
                 </div>
@@ -230,7 +243,8 @@
                 <div class="form-group" v-if="selectedMountPoint?.blockConfig?.encrypt">
                   <label class="form-label">加密密码</label>
                   <input v-model="selectedMountPoint.blockConfig.password" type="password" class="form-input"
-                    placeholder="输入加密密码">
+                    placeholder="输入加密密码" :readonly="selectedMountPoint.isMounted"
+                    :class="{ 'readonly': selectedMountPoint.isMounted }">
                 </div>
               </div>
             </div>
@@ -312,8 +326,8 @@
                     </svg>
                   </div>
                   <div class="stat-content">
-                    <div class="stat-label">已用空间</div>
-                    <div class="stat-value">{{ formatSize(selectedMountPoint?.usedSpace) }}</div>
+                    <div class="stat-label">原始大小</div>
+                    <div class="stat-value">{{ formatSize(selectedMountPoint?.stats?.spaceUsed) }}</div>
                   </div>
                 </div>
                 <div class="stat-item">
@@ -413,7 +427,7 @@
         </button>
       </div>
     </div>
-    
+
     <!-- 自定义对话框 -->
     <div v-if="dialog.visible" class="dialog-overlay" @click="handleDialogCancel">
       <div class="dialog-content" @click.stop>
@@ -437,7 +451,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 // 挂载点相关状态
 const mountPoints = ref([])
@@ -463,6 +477,35 @@ const canMount = computed(() => {
 })
 
 // 方法定义
+// 加载挂载点统计信息
+const loadMountPointStats = async () => {
+  if (!selectedMountPoint.value || !selectedMountPoint.value.isMounted) return
+  
+  try {
+    const stats = await window.go.main.App.Stats(selectedMountPoint.value.id)
+    if (stats) {
+      // 更新选中挂载点的统计信息
+      selectedMountPoint.value.stats = stats
+      
+      // 同时更新mountPoints数组中的对应项
+      const index = mountPoints.value.findIndex(mp => mp.id === selectedMountPoint.value.id)
+      if (index !== -1) {
+        mountPoints.value[index].stats = stats
+      }
+    }
+  } catch (error) {
+      console.error('获取统计信息失败:', error)
+      // 静默失败，不显示通知以避免打扰用户
+  }
+}
+
+// 监听activeTab变化，切换到统计信息标签时加载最新统计数据
+watch(activeTab, (newTab, oldTab) => {
+  if (newTab === 'stats') {
+    loadMountPointStats()
+  }
+})
+
 const loadMountPoints = async () => {
   try {
     // 调用后端GetMountPoints方法
@@ -517,7 +560,7 @@ const saveMountPoint = async () => {
 const deleteMountPoint = async () => {
   if (selectedIndex.value < 0) return
 
-  showConfirmDialog( '确认删除','确定要删除此挂载点吗？',
+  showConfirmDialog('确认删除', '确定要删除此挂载点吗？',
     async () => {
       // 确认删除后的逻辑
       try {
@@ -540,32 +583,42 @@ const deleteMountPoint = async () => {
 
 const handleMountAction = async () => {
   if (!selectedMountPoint.value) return
+  let result = selectedMountPoint.value.isMounted ? '卸载' : '挂载'
+
+  // 记录开始时间
+  const startTime = Date.now()
 
   try {
     // 设置加载状态
     isLoading.value = true
-    
-    let result
+
     // 修复逻辑：isMounted为true时应调用Unmount，否则调用Mount
     if (selectedMountPoint.value.isMounted) {
       // 调用后端Unmount方法
-      result = await window.go.main.App.Unmount(selectedMountPoint.value.id)
+      await window.go.main.App.Unmount(selectedMountPoint.value.id)
     } else {
       await window.go.main.App.AddMountPoint(selectedMountPoint.value)
       // 调用后端Mount方法
-      result = await window.go.main.App.Mount(selectedMountPoint.value.id)
+      await window.go.main.App.Mount(selectedMountPoint.value.id)
+    }
+
+    // 计算已用时间
+    const elapsedTime = Date.now() - startTime
+    // 确保至少等待3秒
+    if (elapsedTime < 3000) {
+      await new Promise(resolve => setTimeout(resolve, 3000 - elapsedTime))
     }
 
     // 重新加载挂载点列表以更新状态
     await loadMountPoints()
     // 重新选中当前挂载点
     selectMountPoint(selectedIndex.value)
-    showNotification(result, 'success')
+    showNotification(result + "成功", 'success')
   } catch (error) {
-    showNotification('操作失败: ' + error.message, 'error')
-    console.error('挂载/卸载操作失败:', error)
+    showNotification(result + '失败', 'error')
+    console.error(result + '失败', error)
   } finally {
-    // 无论成功失败，都要清除加载状态
+    // 清除加载状态
     isLoading.value = false
   }
 }
@@ -580,7 +633,7 @@ const formatSize = (bytes) => {
 
 const getStoragePercent = (mountPoint) => {
   if (!mountPoint.totalSpace || mountPoint.totalSpace === 0) return 0
-  return Math.min((mountPoint.usedSpace / mountPoint.totalSpace) * 100, 100)
+  return Math.min((mountPoint.UsedSpace / mountPoint.totalSpace) * 100, 100)
 }
 
 
@@ -601,15 +654,6 @@ const browseDataDir = async () => {
   }
 }
 
-const minimizeWindow = () => {
-  // 最小化窗口功能
-  console.log('Minimize window')
-}
-
-const closeWindow = () => {
-  // 关闭窗口功能
-  console.log('Close window')
-}
 
 // 对话框状态
 const dialog = ref({
@@ -644,15 +688,15 @@ const handleDialogConfirm = () => {
 }
 
 // 处理对话框取消
-  const handleDialogCancel = () => {
-    if (dialog.value.onCancel && typeof dialog.value.onCancel === 'function') {
-      dialog.value.onCancel()
-    }
-    dialog.value.visible = false
+const handleDialogCancel = () => {
+  if (dialog.value.onCancel && typeof dialog.value.onCancel === 'function') {
+    dialog.value.onCancel()
   }
+  dialog.value.visible = false
+}
 
-  // 通知列表
-  const notifications = ref([])
+// 通知列表
+const notifications = ref([])
 
 // 移除通知的函数
 const removeNotification = (id) => {
@@ -685,9 +729,42 @@ const showNotification = (message, type = 'info') => {
   console.log(`[${type.toUpperCase()}] ${message}`)
 }
 
+const checkMountPointStatus = async () => {
+  // 启动定时检查挂载点状态的定时器
+  const statusCheckInterval = setInterval(async () => {
+    try {
+      // 遍历所有挂载点
+      for (let i = 0; i < mountPoints.value.length; i++) {
+        const currentMP = mountPoints.value[i]
+        // 调用后端GetMountPoint方法获取最新状态
+        const updatedMP = await window.go.main.App.GetMountPoint(currentMP.id)
+
+        // 更新挂载点状态
+        if (updatedMP && updatedMP.isMounted !== currentMP.isMounted) {
+          // 直接更新isMounted属性
+          currentMP.isMounted = updatedMP.isMounted
+
+          // 如果当前选中的是这个挂载点，也要更新selectedMountPoint
+          if (selectedIndex.value === i) {
+            selectedMountPoint.value.isMounted = updatedMP.isMounted
+          }
+        }
+      }
+    } catch (error) {
+      console.error('定时检查挂载点状态失败:', error)
+    }
+  }, 1000) // 每秒检查一次
+}
+
 // 组件挂载后从后端加载挂载点数据
 onMounted(async () => {
   loadMountPoints()
+  checkMountPointStatus()
+})
+
+// 组件卸载时清理定时器
+onUnmounted(() => {
+  clearInterval(statusCheckInterval)
 })
 </script>
 
@@ -696,7 +773,6 @@ html,
 body {
   width: 100%;
   height: 100%;
-  overflow: hidden;
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -707,9 +783,37 @@ body {
 #app {
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
   /* 确保根应用容器也不滚动 */
   background: rgba(15, 23, 42, 0.5);
+}
+
+/* 只读状态样式 */
+.form-input.readonly,
+select.form-input.readonly {
+  background-color: #1e293b;
+  color: #94a3b8;
+  cursor: not-allowed;
+  border-color: #334155;
+}
+
+/* 禁用状态增强样式 */
+.form-input[readonly],
+select.form-input:disabled,
+.checkbox-input:disabled+.checkbox-label {
+  cursor: not-allowed;
+}
+
+.checkbox-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* 按钮禁用状态增强 */
+.action-button:disabled,
+.browse-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* 应用容器 */
@@ -717,7 +821,7 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: rgba(15, 23, 42, 0.5);
+  background: #0f172a;
   color: #e2e8f0;
 }
 
@@ -750,9 +854,7 @@ body {
   font-weight: 600;
   font-size: 14px;
   letter-spacing: 0.5px;
-  background: linear-gradient(90deg, #60a5fa 0%, #38bdf8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #60a5fa;
 }
 
 .title-bar-controls {
@@ -788,6 +890,7 @@ body {
   flex: 1;
   overflow: hidden;
   min-height: 0;
+  background: #0f172a;
 }
 
 /* 通知组件样式 */
@@ -858,115 +961,113 @@ body {
   background-color: rgba(255, 255, 255, 0.15);
 }
 
-
-
 /* 对话框样式 */
-  .dialog-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(2px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-  }
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
 
-  .dialog-content {
-    background: rgba(15, 23, 42, 0.95);
-    border: 1px solid rgba(71, 85, 105, 0.3);
-    border-radius: 8px;
-    padding: 20px;
-    width: 400px;
-    max-width: 90%;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
-    color: #e2e8f0;
-  }
+.dialog-content {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 8px;
+  padding: 20px;
+  width: 400px;
+  max-width: 90%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  color: #e2e8f0;
+}
 
-  .dialog-header {
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid rgba(71, 85, 105, 0.2);
-  }
+.dialog-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.2);
+}
 
-  .dialog-title {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: #f1f5f9;
-  }
+.dialog-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
 
-  .dialog-body {
-    margin-bottom: 20px;
-  }
+.dialog-body {
+  margin-bottom: 20px;
+}
 
-  .dialog-message {
-    margin: 0;
-    color: #cbd5e1;
-    font-size: 14px;
-    line-height: 1.5;
-  }
+.dialog-message {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.5;
+}
 
-  .dialog-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-  }
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
 
-  .dialog-button {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-weight: 500;
-  }
+.dialog-button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
 
-  .cancel-button {
-    background: transparent;
-    color: #94a3b8;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-  }
+.cancel-button {
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
 
-  .cancel-button:hover {
-    background: rgba(148, 163, 184, 0.1);
-    color: #cbd5e1;
-  }
+.cancel-button:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: #cbd5e1;
+}
 
-  .confirm-button {
-    background: rgba(37, 99, 235, 0.8);
-    color: white;
-    border: 1px solid rgba(96, 165, 250, 0.3);
-  }
-
-  .confirm-button:hover {
-    background: rgba(59, 130, 246, 0.8);
-    border-color: rgba(96, 165, 250, 0.5);
-  }
-
-  /* 不同类型通知的样式 */
-  .notification-info {
+.confirm-button {
   background: rgba(37, 99, 235, 0.8);
+  color: white;
   border: 1px solid rgba(96, 165, 250, 0.3);
 }
 
+.confirm-button:hover {
+  background: rgba(59, 130, 246, 0.8);
+  border-color: rgba(96, 165, 250, 0.5);
+}
+
+/* 不同类型通知的样式 */
+.notification-info {
+  background: rgba(37, 99, 235, 0.9);
+  border: 1px solid rgba(96, 165, 250, 0.4);
+}
+
 .notification-success {
-  background: rgba(16, 185, 129, 0.8);
-  border: 1px solid rgba(52, 211, 153, 0.3);
+  background: rgba(16, 185, 129, 0.9);
+  border: 1px solid rgba(52, 211, 153, 0.4);
 }
 
 .notification-warning {
-  background: rgba(245, 158, 11, 0.8);
-  border: 1px solid rgba(251, 191, 36, 0.3);
+  background: rgba(245, 158, 11, 0.9);
+  border: 1px solid rgba(251, 191, 36, 0.4);
 }
 
 .notification-error {
-  background: rgba(220, 38, 38, 0.8);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(220, 38, 38, 0.9);
+  border: 1px solid rgba(239, 68, 68, 0.4);
 }
 
 /* 侧边栏 */
@@ -994,7 +1095,7 @@ body {
 .add-button {
   width: 100%;
   padding: 8px;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: #3b82f6;
   color: white;
   border: none;
   border-radius: 6px;
@@ -1089,7 +1190,7 @@ body {
 }
 
 .mount-status.mounted {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background: #10b981;
   color: white;
 }
 
@@ -1117,7 +1218,7 @@ body {
 
 .storage-fill {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
+  background: #3b82f6;
   border-radius: 2px;
   transition: width 0.3s ease;
 }
@@ -1198,9 +1299,6 @@ body {
   font-size: 18px;
   font-weight: 700;
   margin: 0 0 2px 0;
-  background: linear-gradient(90deg, #f8fafc 0%, #cbd5e1 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
 }
 
 .config-subtitle {
@@ -1253,12 +1351,17 @@ body {
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .action-button.primary {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  background: #3b82f6;
   color: white;
 }
 
@@ -1279,7 +1382,7 @@ body {
 }
 
 .action-button.danger {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  background: #ef4444;
   color: white;
 }
 

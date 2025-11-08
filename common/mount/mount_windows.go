@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-	"time"
-	"unsafe"
 
 	"github.com/mageg-x/dedupfs/common/dfs"
 	"github.com/mageg-x/dedupfs/common/utils"
@@ -34,13 +32,12 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 		logger.Errorf("Failed to get absolute path for source directory: %v", err)
 		return fmt.Errorf("Failed to get absolute path for source directory: %w", err)
 	}
+	os.MkdirAll(sourceDir, 0777)
 	// 判断 sourceDir 是否存在
 	if _, err := os.Stat(sourceDir); os.IsNotExist(err) {
 		logger.Errorf("Source directory does not exist: %s", sourceDir)
 		return fmt.Errorf("Source directory does not exist: %s", sourceDir)
 	}
-
-	ForceUnmount(mountPoint)
 
 	// 设置默认配置
 	chunkConf := &dfs.ChunkConfig{
@@ -81,16 +78,7 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 
 	host := fuse.NewFileSystemHost(fsys)
 	//  设置文件系统能力
-	// host.SetCapCaseInsensitive(true) // 支持大小写不敏感
 	host.SetCapReaddirPlus(true) // 支持增强的目录读取
-
-	// 锁定目录
-	// if ld, err := utils.LockDirectory(sourceDir); err != nil {
-	// 	logger.Errorf("failed to lock source directory: %v", err)
-	// 	return fmt.Errorf("failed to lock source directory: %w", err)
-	// } else {
-	// 	defer ld.Close()
-	// }
 
 	// 配置挂载参数
 	opts := []string{
@@ -118,7 +106,6 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 	success := host.Mount("", opts)
 	if !success {
 		logger.Errorf("Failed to mount deduplicated file system at %s", mountPoint)
-		// 如果失败，可以获取具体的错误信息（在某些版本中可能需要通过其他方式）
 		return syscall.EAGAIN // 或返回一个更具描述性的错误
 	}
 
@@ -157,49 +144,11 @@ func Unmount(mountPoint string) error {
 	return nil
 }
 
-// 强制清理挂载点
-func ForceUnmount(mountPoint string) error {
-	var (
-		mpr                   = syscall.NewLazyDLL("mpr.dll")
-		wNetCancelConnection2 = mpr.NewProc("WNetCancelConnection2W")
-	)
-
-	drivePtr, err := syscall.UTF16PtrFromString(mountPoint[:2]) // "S:"
-	if err != nil {
-		logger.Errorf("Failed to convert drive letter to UTF-16: %v", err)
-		return err
-	}
-
-	// 参数: 驱动器名, 标志(0=立即断开, 1=无连接时失败), 强制断开(TRUE=1)
-	ret, _, err := wNetCancelConnection2.Call(
-		uintptr(unsafe.Pointer(drivePtr)),
-		uintptr(0x1), // CONNECT_UPDATE_PROFILE: 确保永久断开，防止重启后重现
-		uintptr(1),   // TRUE: 强制断开
-	)
-
-	if ret != 0 {
-		return fmt.Errorf("WNetCancelConnection2 failed: %d", ret)
-	}
-
-	// 轮询检查盘符是否可用，例如最多等待3秒，每次检查间隔300毫秒
-	timeout := 3 * time.Second
-	checkInterval := 300 * time.Millisecond
-	startTime := time.Now()
-
-	for time.Since(startTime) < timeout {
-		if IsDriveAvailable(mountPoint) { // 你需要实现这个函数
-			return nil
-		}
-		time.Sleep(checkInterval)
-	}
-	return fmt.Errorf("unmount %s time out", mountPoint)
-}
-
 // 检查盘符是否可用
 func IsDriveAvailable(drive string) bool {
 	_, err := os.Stat(drive + "\\")
 	if err != nil {
-		return true // 盘符不存在，可用
+		return false // 盘符不存在，可用
 	}
-	return false // 盘符存在，被占用
+	return true // 盘符存在，被占用
 }

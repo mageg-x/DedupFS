@@ -55,7 +55,7 @@ func (fs *DedupFS) Stats() {
 		if filesystem.RootNode != nil {
 			fileCount, dirCount, totalSize, realSize, chunkCount, blockCount, refChunkCount := calculateNodeStats(filesystem)
 			stats.FileCount = fileCount
-			stats.DirCount = dirCount
+			stats.DirCount = max(0, dirCount-1)
 			stats.SpaceUsed = totalSize
 			stats.RealSize = realSize
 			stats.ChunkCount = chunkCount

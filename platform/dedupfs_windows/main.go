@@ -6,7 +6,6 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,15 +15,15 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
+	"github.com/getlantern/systray"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"golang.org/x/sys/windows"
 
 	"github.com/mageg-x/dedupfs/common/cmd"
 	"github.com/mageg-x/dedupfs/common/dfs"
@@ -36,6 +35,9 @@ import (
 //go:embed frontend/dist
 var Assets embed.FS
 
+//go:embed frontend/assets/icon.ico
+var iconICO []byte
+
 var (
 	logger = log.GetLogger("dedupfs")
 )
@@ -45,6 +47,7 @@ type Stats struct {
 	FsId             string  `json:"fsId"`
 	BaseDir          string  `json:"baseDir"`
 	Files            int     `json:"files"`
+	SpaceUsed        uint64  `json:"spaceUsed"`
 	Directories      int     `json:"directories"`
 	RealSize         int64   `json:"realSize"`
 	TotalChunks      int     `json:"totalChunks"`
@@ -75,6 +78,7 @@ type App struct {
 	mps        map[string]*MountPoint
 	mu         sync.RWMutex
 	configFile string
+	cancelFunc context.CancelFunc
 }
 
 // NewApp 创建 App 实例
@@ -115,6 +119,44 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 	}
+
+	// 启动一个定时器， 定时检查挂载点状态
+	go func() {
+		ticker := time.NewTicker(time.Second * 5)
+		defer ticker.Stop()
+		for range ticker.C {
+			for _, mp := range a.mps {
+				if mp.IsMounted {
+					// 检查挂载点状态
+					if !mount.IsDriveAvailable(mp.MountPath) {
+						utils.WithLock(&a.mu, func() error {
+							mp.IsMounted = false
+							return nil
+						})
+
+						continue
+					}
+
+					if !cmd.InvokeStat(mp.MountPath) {
+						utils.WithLock(&a.mu, func() error {
+							mp.IsMounted = false
+							return nil
+						})
+
+						continue
+					}
+				} else {
+					if cmd.InvokeStat(mp.MountPath) {
+						utils.WithLock(&a.mu, func() error {
+							mp.IsMounted = true
+							return nil
+						})
+						continue
+					}
+				}
+			}
+		}
+	}()
 }
 
 // loadConfig 从配置文件加载挂载点信息，动态字段设置默认值
@@ -219,6 +261,12 @@ func (a *App) GetMountPoints() ([]*MountPoint, error) {
 	return mountPoints, nil
 }
 
+func (a *App) GetMountPoint(id string) (*MountPoint, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.mps[id], nil
+}
+
 // SaveMountPoint 保存挂载点配置（供前端调用）
 func (a *App) SaveMountPoint(mp *MountPoint) error {
 	utils.WithLock(&a.mu, func() error {
@@ -311,10 +359,7 @@ func (a *App) Mount(id string) error {
 		if !exists {
 			return fmt.Errorf("mount point not exists")
 		}
-		if !mount.IsDriveAvailable(_mp.MountPath) {
-			logger.Errorf("drive %s not available", _mp.MountPath)
-			return fmt.Errorf("drive %s not available", _mp.MountPath)
-		}
+
 		mp = _mp
 		return nil
 	})
@@ -323,26 +368,37 @@ func (a *App) Mount(id string) error {
 		return err
 	}
 
+	err = utils.RetryCall(5, func() error {
+		if mount.IsDriveAvailable(mp.MountPath) {
+			cmd.InvokeUnmount(mp.MountPath)
+			return fmt.Errorf("drive %s not available", mp.MountPath)
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Errorf("drive %s not available", mp.MountPath)
+		return err
+	}
 	// 构建命令行参数
 	args := []string{"mount", mp.MountPath, mp.DataDir}
 
-	// // 添加块配置参数
-	// if mp.BlockConfig != nil {
-	// 	args = append(args, "--block-size", fmt.Sprintf("%d", mp.BlockConfig.Size))
-	// 	args = append(args, "--compress", fmt.Sprintf("%t", mp.BlockConfig.Compress))
-	// 	args = append(args, "--encrypt", fmt.Sprintf("%t", mp.BlockConfig.Encrypt))
-	// 	if mp.BlockConfig.Password != "" {
-	// 		args = append(args, "--password", mp.BlockConfig.Password)
-	// 	}
-	// }
+	// 添加块配置参数
+	if mp.BlockConfig != nil {
+		args = append(args, "--block-size="+fmt.Sprintf("%d", mp.BlockConfig.Size*1024*1024))
+		args = append(args, "--compress="+fmt.Sprintf("%t", mp.BlockConfig.Compress))
+		args = append(args, "--encrypt="+fmt.Sprintf("%t", mp.BlockConfig.Encrypt))
+		if mp.BlockConfig.Password != "" {
+			args = append(args, "--password="+mp.BlockConfig.Password)
+		}
+	}
 
-	// // 添加分块配置参数
-	// if mp.ChunkConfig != nil {
-	// 	args = append(args, "--fixed-size", fmt.Sprintf("%t", mp.ChunkConfig.FixedSize))
-	// 	args = append(args, "--min-size", fmt.Sprintf("%d", mp.ChunkConfig.MinSize))
-	// 	args = append(args, "--avg-size", fmt.Sprintf("%d", mp.ChunkConfig.AvgSize))
-	// 	args = append(args, "--max-size", fmt.Sprintf("%d", mp.ChunkConfig.MaxSize))
-	// }
+	// 添加分块配置参数
+	if mp.ChunkConfig != nil {
+		args = append(args, "--fixed-size="+fmt.Sprintf("%t", mp.ChunkConfig.FixedSize))
+		args = append(args, "--min-size="+fmt.Sprintf("%d", mp.ChunkConfig.MinSize*1024))
+		args = append(args, "--avg-size="+fmt.Sprintf("%d", mp.ChunkConfig.AvgSize*1024))
+		args = append(args, "--max-size="+fmt.Sprintf("%d", mp.ChunkConfig.MaxSize*1024))
+	}
 
 	// 获取可执行文件路径
 	exePath := "dedupfs-cli.exe"
@@ -359,6 +415,7 @@ func (a *App) Mount(id string) error {
 	}
 
 	// 启动进程
+	logger.Errorf("starting mount process: %s %+v", exePath, args)
 	command := exec.Command(exePath, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 
@@ -368,25 +425,30 @@ func (a *App) Mount(id string) error {
 	}
 
 	// 等待最多 5 秒，每 200ms 检查一次
-	alive := false
-	for i := 0; i < 25; i++ {
+	err = utils.RetryCall(5, func() error {
 		if cmd.InvokeStat(mp.MountPath) {
-			alive = true
-			break
+			return nil
 		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if !alive {
+		return fmt.Errorf("stat %s failed", mp.MountPath)
+	})
+	if err != nil {
 		logger.Errorf("mount %s failed", mp.MountPath)
 		// 清理
-		command.Process.Kill()
-		mount.ForceUnmount(mp.MountPath)
+		if command.Process != nil {
+			command.Process.Kill()
+		} else {
+			cmd.InvokeUnmount(mp.MountPath)
+		}
+
 		return fmt.Errorf("mount %s failed", mp.MountPath)
 	}
 
 	logger.Infof("mount %s success", mp.MountPath)
 	mp.cmd = command
 	mp.IsMounted = true
+
+	a.Stats(id)
+
 	utils.WithLock(&a.mu, func() error {
 		// 更新挂载点
 		a.mps[mp.ID] = mp
@@ -410,16 +472,22 @@ func (a *App) Unmount(id string) error {
 		mp = _mp
 		return nil
 	})
+
 	if err != nil || mp == nil {
 		logger.Errorf("mount point not exists")
 		return err
 	}
 
+	// 如果已经是未挂载，则直接返回
+	if !mount.IsDriveAvailable(mp.MountPath) {
+		mp.IsMounted = false
+		logger.Infof("drive %s not available", mp.MountPath)
+		return nil
+	}
+
 	if err := cmd.InvokeUnmount(mp.MountPath); err != nil {
-		if err := mount.ForceUnmount(mp.MountPath); err != nil {
-			logger.Errorf("force unmount %s failed: %v", mp.MountPath, err)
-			return fmt.Errorf("unmount failed")
-		}
+		logger.Errorf("force unmount %s failed: %v", mp.MountPath, err)
+		return fmt.Errorf("unmount failed")
 	}
 
 	// 标记为未挂载
@@ -456,12 +524,17 @@ func (a *App) Stats(id string) (*Stats, error) {
 			BaseDir:          stats.BaseDir,
 			Files:            stats.FileCount,
 			Directories:      stats.DirCount,
+			SpaceUsed:        stats.SpaceUsed,
 			RealSize:         stats.RealSize,
 			TotalChunks:      stats.ChunkCount,
 			Blocks:           stats.BlockCount,
 			ReferencedChunks: stats.RefChunkCount,
 			CompressionRatio: stats.DeduplicationRatio,
 			LastUpdated:      stats.LastUpdated.Local().Format("2006-01-02 15:04:05"),
+		}
+		mp.UsedSpace = int64(stats.SpaceUsed)
+		if _, _, space, err := utils.GetDiskFreeSpaceEx(mp.MountPath); err == nil {
+			mp.TotalSpace = int64(space) + mp.UsedSpace
 		}
 	}
 	return mp.Stats, nil
@@ -487,80 +560,100 @@ func (a *App) Cleanup() {
 	}
 
 	// 卸载所有挂载点
-	mount.CleanupMounts()
-
+	for _, mp := range a.mps {
+		cmd.InvokeUnmount(mp.MountPath)
+	}
+	// 强制杀死所有 mount 进程
+	command := exec.Command("taskkill", "/F", "/IM", "dedupfs-cli.exe")
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	command.Run()
 	logger.Info("Cleanup completed successfully")
 }
 
-// IsElevated 检查当前进程是否具有管理员权限。
-func IsElevated() bool {
-	var token windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &token); err != nil {
-		return false
-	}
-	defer token.Close()
-
-	elevated := token.IsElevated()
-	return elevated
+// 最小化窗口到托盘的方法
+func (a *App) HideWindow() {
+	logger.Info("Minimizing application to tray")
+	runtime.WindowHide(a.ctx)
 }
 
-// ElevateSelf 以管理员身份重新启动当前程序（无参数）。
-func ElevateSelf() error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
+// 显示应用窗口的方法
+func (a *App) ShowWindow() {
+	logger.Info("Showing application window")
+	runtime.WindowShow(a.ctx)
+}
 
-	verb, err := windows.UTF16PtrFromString("runas")
-	if err != nil {
-		return err
-	}
-	file, err := windows.UTF16PtrFromString(exe)
-	if err != nil {
-		return err
-	}
+// 托盘逻辑（同前）
+func (a *App) onReady() {
+	systray.SetIcon(iconICO)
+	systray.SetTooltip("DedupFS")
 
-	shell32 := windows.NewLazyDLL("shell32.dll")
-	shellExecute := shell32.NewProc("ShellExecuteW")
+	show := systray.AddMenuItem("显示", "显示")
+	quit := systray.AddMenuItem("退出", "退出")
 
-	ret, _, _ := shellExecute.Call(
-		0,
-		uintptr(unsafe.Pointer(verb)),
-		uintptr(unsafe.Pointer(file)),
-		0, // params
-		0, // dir
-		uintptr(windows.SW_SHOW),
-	)
-
-	if ret <= 32 {
-		if ret == 1223 { // ERROR_CANCELLED
-			return errors.New("需要管理员权限才能执行此操作")
+	go func() {
+		for {
+			select {
+			case <-show.ClickedCh:
+				a.ShowWindow()
+			case <-quit.ClickedCh:
+				systray.Quit()
+				a.QuitApp()
+				os.Exit(0) // 不优雅，但能用
+				return
+			}
 		}
-		return errors.New("请求管理员权限失败")
-	}
+	}()
+}
 
-	os.Exit(0)
-	return nil
+func (a *App) onExit() {}
+
+// 真正退出应用的方法
+func (a *App) QuitApp() {
+	logger.Info("Quitting application")
+	a.Cleanup()
+	runtime.Quit(a.ctx)
 }
 
 // Gui 启动GUI模式
 func runGui() {
 	logger.Infof("Initializing GUI mode...")
 
+	// 强制杀死所有 mount 进程
+	command := exec.Command("taskkill", "/F", "/IM", "dedupfs-cli.exe")
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	command.Run()
+
 	// 初始化应用
 	app := NewApp()
 
 	// 创建 Wails 应用
 	_, cancel := context.WithCancel(context.Background())
+	app.cancelFunc = cancel
+
+	// 启动托盘
+	go func() {
+		systray.Run(app.onReady, app.onExit)
+	}()
+
 	err := wails.Run(&options.App{
 		Title:  "DedupFS Manager",
 		Width:  800,
 		Height: 540,
+		// 关键：禁用默认关闭行为
+		Windows: &windows.Options{
+			WebviewIsTransparent: false,
+			WindowIsTranslucent:  false,
+			EnableSwipeGestures:  true,
+		},
 		AssetServer: &assetserver.Options{
 			Assets: Assets,
 		},
 		BackgroundColour: &options.RGBA{R: 15, G: 23, B: 42, A: 128},
 		OnStartup:        app.startup,
+		OnBeforeClose: func(ctx context.Context) (preventQuit bool) {
+			app.HideWindow()
+			return true // 阻止退出
+		},
 		OnShutdown: func(ctx context.Context) {
 			logger.Info("Application shutting down gracefully")
 			app.Cleanup()

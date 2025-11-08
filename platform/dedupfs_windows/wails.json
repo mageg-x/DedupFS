@@ -17,8 +17,7 @@
     "binDir": "bin",
     "assetsDir": "assets",
     "windows": {
-      "icon": "icon.ico",
-      "manifest": "requireAdministrator"
+      "icon": "icon.ico"
     }
   }
 }

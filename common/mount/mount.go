@@ -47,7 +47,7 @@ func CleanupMounts() {
 		mountPoints = append(mountPoints, mp)
 	}
 	MountMutex.RUnlock()
-
+	logger.Infof("cleaning mounted directories %+v", mountPoints)
 	for _, mp := range mountPoints {
 		logger.Infof("cleaning up mounted directory: ", mp)
 		if err := Unmount(mp); err != nil {

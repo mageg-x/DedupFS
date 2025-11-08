@@ -167,21 +167,24 @@ func mountAction(cmd *cobra.Command, args []string) error {
 
 	// 注册信号处理，捕获程序终止信号
 	setupSignalHandler(cancel)
-
+	BlockConf := mount.BlockConfig{
+		Size:     blockSize,
+		Compress: compress,
+		Encrypt:  encrypt,
+		Password: password,
+	}
+	ChunkConf := mount.ChunkConfig{
+		FixedSize: fixedSize,
+		MinSize:   minSize,
+		AvgSize:   avgSize,
+		MaxSize:   maxSize,
+	}
+	logger.Errorf("mounting %s to %s %+v %+v ", dataDir, mountPoint, BlockConf, ChunkConf)
 	mount.Mount(mountPoint, dataDir, &mount.MountOptions{
-		BlockConf: &mount.BlockConfig{
-			Size:     blockSize,
-			Compress: compress,
-			Encrypt:  encrypt,
-			Password: password,
-		},
-		ChunkConf: &mount.ChunkConfig{
-			FixedSize: fixedSize,
-			MinSize:   minSize,
-			AvgSize:   avgSize,
-			MaxSize:   maxSize,
-		},
+		BlockConf: &BlockConf,
+		ChunkConf: &ChunkConf,
 	})
+
 	logger.Errorf("exit mount %s to %s", mountPoint, dataDir)
 	return nil
 }
@@ -192,12 +195,6 @@ func unmountAction(cmd *cobra.Command, args []string) error {
 	logger.Infof("sending unmount request for %s", mountPoint)
 
 	if err := ipccmd.InvokeUnmount(mountPoint); err != nil {
-		if errr := mount.ForceUnmount(mountPoint); errr != nil {
-			logger.Errorf("force unmount failed: %v", errr)
-		} else {
-			logger.Infof("force unmount successful")
-			return err
-		}
 		logger.Errorf("unmount failed: %v", err)
 		return err
 	}
