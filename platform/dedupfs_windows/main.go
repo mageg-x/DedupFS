@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/getlantern/systray"
+	"github.com/energye/systray"
 	"github.com/gofrs/flock"
 	"github.com/google/uuid"
 	"github.com/pkg/browser"
@@ -158,6 +158,11 @@ func (a *App) startup(ctx context.Context) {
 				}
 			}
 		}
+	}()
+
+	// 启动托盘
+	go func() {
+		systray.Run(a.onReady, a.onExit)
 	}()
 }
 
@@ -600,22 +605,37 @@ func (a *App) onReady() {
 	systray.SetIcon(iconICO)
 	systray.SetTooltip("DedupFS")
 
-	show := systray.AddMenuItem("显示", "显示")
-	quit := systray.AddMenuItem("退出", "退出")
+	show := systray.AddMenuItem("Show", "Show Window")
+	quit := systray.AddMenuItem("Exit", "Exit")
 
-	go func() {
-		for {
-			select {
-			case <-show.ClickedCh:
-				a.ShowWindow()
-			case <-quit.ClickedCh:
-				systray.Quit()
-				a.QuitApp()
-				os.Exit(0) // 不优雅，但能用
-				return
-			}
+	systray.SetOnDClick(func(menu systray.IMenu) {
+		logger.Info("clicked menu")
+		if a != nil {
+			a.ShowWindow()
 		}
-	}()
+	})
+	systray.SetOnRClick(func(menu systray.IMenu) {
+		logger.Info("right clicked menu")
+		if menu != nil {
+			menu.ShowMenu()
+		}
+	})
+
+	show.Enable()
+	show.Click(func() {
+		if a != nil {
+			a.ShowWindow()
+		}
+	})
+
+	quit.Enable()
+	quit.Click(func() {
+		systray.Quit()
+		if a != nil {
+			a.QuitApp()
+		}
+		os.Exit(0) // 不优雅，但能用
+	})
 }
 
 func (a *App) onExit() {}
@@ -643,11 +663,6 @@ func runGui() {
 	_, cancel := context.WithCancel(context.Background())
 	app.cancelFunc = cancel
 
-	// 启动托盘
-	go func() {
-		systray.Run(app.onReady, app.onExit)
-	}()
-
 	err := wails.Run(&options.App{
 		Title:  "DedupFS Manager",
 		Width:  800,
@@ -669,6 +684,7 @@ func runGui() {
 		},
 		OnShutdown: func(ctx context.Context) {
 			logger.Info("application shutting down gracefully")
+			systray.Quit()
 			app.Cleanup()
 			cancel()
 		},
@@ -699,7 +715,6 @@ func runGui() {
 }
 
 func main() {
-
 	// 获取程序安装目录，初始化日志
 	appDir, err := os.Executable()
 	if err != nil {

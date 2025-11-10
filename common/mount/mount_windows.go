@@ -79,10 +79,23 @@ func Mount(mountPoint, sourceDir string, options *MountOptions) error {
 	host := fuse.NewFileSystemHost(fsys)
 	//  设置文件系统能力
 	host.SetCapReaddirPlus(true) // 支持增强的目录读取
+	host.SetCapDeleteAccess(true)
 
 	// 配置挂载参数
 	opts := []string{
 		mountPoint,
+		"-s",
+		// "-o", "debug", // 启用调试
+		"-o", "volname=DedupFS",
+		"-o", "ExactFileSystemName=DedupFS",
+		// "-o", "ThreadCount=32",
+		"-o", "DirInfoTimeout=1000",
+		"-o", "FileInfoTimeout=1000",
+		"-o", "VolumeInfoTimeout=1000",
+		"-o", "KeepFileCache",
+		// "-o", "VolumePrefix=/dfs",
+		// "-o", "dothidden",        // 取消注释以隐藏 . 开头文件
+		"-o", "uid=-1,gid=-1", // 在 Windows 上通常无效，可省略
 	}
 
 	fsys.Host = host

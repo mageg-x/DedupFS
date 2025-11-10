@@ -2,7 +2,6 @@ package dfs
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -39,7 +38,7 @@ type INode struct {
 	Ctime         time.Time         `msgpack:"ctime" json:"ctime"`
 	Crtime        time.Time         `msgpack:"crtime" json:"crtime"`
 	Kind          FileType          `msgpack:"kind" json:"kind"`
-	Perm          uint16            `msgpack:"perm" json:"perm"`
+	Mode          uint32            `msgpack:"mode" json:"mode"`
 	Nlink         uint32            `msgpack:"nlink" json:"nlink"`
 	Uid           uint32            `msgpack:"uid" json:"uid"`
 	Gid           uint32            `msgpack:"gid" json:"gid"`
@@ -58,14 +57,14 @@ func (n *INode) Len() int {
 	return int(n.Size) + 160
 }
 
-func (n *INode) Read(offset int64, size int, fs *DedupFS) []byte {
+func (n *INode) Read(offset int64, size int, fs *DedupFS) ([]byte, error) {
 	logger.Debugf("reading data from inode %d: offset=%d, size=%d", n.Ino, offset, size)
 
 	// 边界检查
 	if offset >= int64(n.Size) || size == 0 || len(n.Chunks) == 0 {
 		logger.Debugf("reading no data from inode %d: offset=%d, size=%d, file_size=%d",
 			n.Ino, offset, size, n.Size)
-		return nil // 或 return []byte{}
+		return nil, nil // 或 return []byte{}
 	}
 
 	maxBytesToRead := int64(size)
@@ -73,7 +72,7 @@ func (n *INode) Read(offset int64, size int, fs *DedupFS) []byte {
 		maxBytesToRead = remaining
 	}
 	if maxBytesToRead <= 0 {
-		return nil
+		return nil, nil
 	}
 
 	result := make([]byte, 0, maxBytesToRead)
@@ -93,12 +92,12 @@ func (n *INode) Read(offset int64, size int, fs *DedupFS) []byte {
 			c, err := GetChunkMeta(chunk.Hash, fs)
 			if err != nil || c == nil {
 				logger.Errorf("failed to get chunk metadata for hash %s: %v", chunk.Hash, err)
-				return nil
+				return nil, fmt.Errorf("failed to get chunk meta")
 			}
 
 			if c.Size < 0 {
 				logger.Errorf("invalid chunk size %d for hash %s", c.Size, chunk.Hash)
-				return nil
+				return nil, fmt.Errorf("invalid chunk size %d for hash %s", c.Size, chunk.Hash)
 			}
 			chunkSize = int(c.Size)
 		}
@@ -136,13 +135,13 @@ func (n *INode) Read(offset int64, size int, fs *DedupFS) []byte {
 			fullChunk, err := GetChunkData(chunk.Hash, fs)
 			if err != nil || fullChunk == nil {
 				logger.Errorf("failed to get chunk data for hash %s: %v", chunk.Hash, err)
-				return nil
+				return nil, fmt.Errorf("failed to get chunk data for hash %s: %w", chunk.Hash, err)
 			}
 			data = fullChunk.Data
 			// 可选：验证 data 长度是否匹配 chunkSize
 			if len(data) != chunkSize {
 				logger.Errorf("chunk data length mismatch: expected %d, got %d for hash %s", chunkSize, len(data), chunk.Hash)
-				return nil
+				return nil, fmt.Errorf("chunk data length mismatch: expected %d, got %d for hash %s", chunkSize, len(data), chunk.Hash)
 			}
 		}
 
@@ -162,7 +161,7 @@ func (n *INode) Read(offset int64, size int, fs *DedupFS) []byte {
 	}
 
 	logger.Debugf("completed reading data from inode %d, actual bytes read: %d", n.Ino, len(result))
-	return result
+	return result, nil
 }
 
 func (n *INode) Write(fs *DedupFS, offset int64, data []byte) error {
@@ -623,7 +622,7 @@ func (n *INode) RemoveXattr(name string) error {
 	return nil
 }
 
-func CreateINode(ino, pino uint64, kind FileType, name string, mode uint16) *INode {
+func CreateINode(ino, pino uint64, uid, gid uint32, kind FileType, name string, mode uint32) *INode {
 	logger.Debugf("creating new inode ino=%d, parent=%d, kind=%s, name=%s, mode=%o",
 		ino, pino, kind, name, mode)
 	now := time.Now().UTC()
@@ -636,17 +635,17 @@ func CreateINode(ino, pino uint64, kind FileType, name string, mode uint16) *INo
 		Ctime:      now,
 		Crtime:     now,
 		Kind:       kind,
-		Perm:       uint16(mode & 0777),
+		Mode:       mode,
 		Nlink:      1,
-		Uid:        uint32(os.Getuid()),
-		Gid:        uint32(os.Getgid()),
+		Uid:        uid,
+		Gid:        gid,
 		Name:       name,
 		Parent:     pino,
 		Xattr:      make(map[string][]byte),
 		Chunks:     []*INodeChunk{},
 		DropChunks: []*INodeChunk{},
 	}
-	logger.Debugf("inode %d Perm %o created successfully", inode.Ino, inode.Perm)
+	logger.Debugf("inode %d Perm %o created successfully", inode.Ino, inode.Mode)
 	return inode
 }
 

@@ -27,49 +27,49 @@ import (
 // CheckPermission 统一的权限校验方法
 func CheckPermission(inode *INode, uid, gid uint32, mask uint32) error {
 	logger.Debugf("checking permission: uid=%d, gid=%d, mask=%d, inodeUid=%d, inodeGid=%d, perm=%o",
-		uid, gid, mask, inode.Uid, inode.Gid, inode.Perm)
+		uid, gid, mask, inode.Uid, inode.Gid, inode.Mode)
 
 	// 检查权限
 	allowed := false
 
 	if uid == inode.Uid {
 		// 所有者权限
-		if uint32(ReadPermission)&mask != 0 && (inode.Perm&0400) != 0 {
+		if uint32(ReadPermission)&mask != 0 && (inode.Mode&0400) != 0 {
 			allowed = true
 		}
-		if uint32(WritePermission)&mask != 0 && (inode.Perm&0200) != 0 {
+		if uint32(WritePermission)&mask != 0 && (inode.Mode&0200) != 0 {
 			allowed = true
 		}
-		if uint32(ExecPermission)&mask != 0 && (inode.Perm&0100) != 0 {
+		if uint32(ExecPermission)&mask != 0 && (inode.Mode&0100) != 0 {
 			allowed = true
 		}
 	} else if gid == inode.Gid {
 		// 组权限
-		if uint32(ReadPermission)&mask != 0 && (inode.Perm&0040) != 0 {
+		if uint32(ReadPermission)&mask != 0 && (inode.Mode&0040) != 0 {
 			allowed = true
 		}
-		if uint32(WritePermission)&mask != 0 && (inode.Perm&0020) != 0 {
+		if uint32(WritePermission)&mask != 0 && (inode.Mode&0020) != 0 {
 			allowed = true
 		}
-		if uint32(ExecPermission)&mask != 0 && (inode.Perm&0010) != 0 {
+		if uint32(ExecPermission)&mask != 0 && (inode.Mode&0010) != 0 {
 			allowed = true
 		}
 	} else {
 		// 其他用户权限
-		if uint32(ReadPermission)&mask != 0 && (inode.Perm&0004) != 0 {
+		if uint32(ReadPermission)&mask != 0 && (inode.Mode&0004) != 0 {
 			allowed = true
 		}
-		if uint32(WritePermission)&mask != 0 && (inode.Perm&0002) != 0 {
+		if uint32(WritePermission)&mask != 0 && (inode.Mode&0002) != 0 {
 			allowed = true
 		}
-		if uint32(ExecPermission)&mask != 0 && (inode.Perm&0001) != 0 {
+		if uint32(ExecPermission)&mask != 0 && (inode.Mode&0001) != 0 {
 			allowed = true
 		}
 	}
 
 	if !allowed {
 		logger.Debugf("permission denied: uid=%d, gid=%d, mask=%d, inodeUid=%d, inodeGid=%d, perm=%o",
-			uid, gid, mask, inode.Uid, inode.Gid, inode.Perm)
+			uid, gid, mask, inode.Uid, inode.Gid, inode.Mode)
 		return syscall.EACCES
 	}
 
@@ -107,13 +107,14 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		ChunkConf:  chunkConf,
 		BlockConf:  blockConf,
 		mutex:      sync.RWMutex{},
+		openmap:    make(map[uint64]uint64),
 	}
 
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 
 	fs.NextNodeID.Store(1)
-
+	fs.NextHandle.Store(1)
 	var err error
 	// 创建必要的目录
 	if err = os.MkdirAll(fs.MetaDir, 0755); err != nil {
@@ -142,7 +143,7 @@ func NewDedupFS(mountPoint, baseDir string, chunkConf *ChunkConfig, blockConf *B
 		fs.RootNode, err = fs.BuildNodeTree()
 	} else {
 		fs.RootNode = NewTree()
-		root = CreateINode(1, 1, FileTypeDir, "/", 0777)
+		root = CreateINode(1, 1, 1, 1, FileTypeDir, "/", 0777)
 		fs.NextNodeID.Store(1) // 1已经用于根目录
 	}
 
@@ -230,7 +231,7 @@ func (fn BaseNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Atime = inode.Atime
 	a.Mtime = inode.Mtime
 	a.Ctime = inode.Ctime
-	a.Mode = os.FileMode(inode.Perm)
+	a.Mode = os.FileMode(inode.Mode)
 	a.Nlink = uint32(inode.Nlink)
 	a.Uid = inode.Uid
 	a.Gid = inode.Gid
@@ -470,7 +471,7 @@ func (fn BaseNode) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *
 	now := time.Now().UTC()
 
 	if req.Valid&fuse.SetattrMode != 0 {
-		inode.Perm = uint16(req.Mode & 0777)
+		inode.Mode = (inode.Mode & syscall.S_IFMT) | uint32(req.Mode)&07777
 	}
 
 	if req.Valid&fuse.SetattrUid != 0 {
@@ -517,7 +518,7 @@ func (fn BaseNode) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *
 	resp.Attr.Atime = inode.Atime
 	resp.Attr.Mtime = inode.Mtime
 	resp.Attr.Ctime = inode.Ctime
-	resp.Attr.Mode = os.FileMode(inode.Perm)
+	resp.Attr.Mode = os.FileMode(inode.Mode)
 	resp.Attr.Nlink = uint32(inode.Nlink)
 	resp.Attr.Uid = inode.Uid
 	resp.Attr.Gid = inode.Gid
@@ -790,13 +791,13 @@ func (fn DirNode) Create(ctx context.Context, req *fuse.CreateRequest, resp *fus
 	resp.Attr.Atime = inode.Atime
 	resp.Attr.Mtime = inode.Mtime
 	resp.Attr.Ctime = inode.Ctime
-	resp.Attr.Mode = os.FileMode(inode.Perm)
+	resp.Attr.Mode = os.FileMode(inode.Mode)
 	resp.Attr.Nlink = uint32(inode.Nlink)
 	resp.Attr.Uid = inode.Uid
 	resp.Attr.Gid = inode.Gid
 	resp.Attr.Rdev = inode.Rdev
 	resp.Attr.Flags = fuse.AttrFlags(inode.Flags)
-	logger.Debugf("dir.create: successfully created file %s with ino %d, mode: %o", req.Name, inode.Ino, inode.Perm)
+	logger.Debugf("dir.create: successfully created file %s with ino %d, mode: %o", req.Name, inode.Ino, inode.Mode)
 
 	return FileNode{BaseNode: BaseNode{fs: fn.fs, ino: inode.Ino}}, NodeHandle{fs: fn.fs, ino: inode.Ino}, nil
 }
@@ -993,7 +994,7 @@ func (fn FileNode) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.R
 		logger.Errorf("file.read: permission denied for ino: %d", fn.ino)
 		return err
 	}
-	if data := inode.Read(req.Offset, req.Size, fn.fs); data == nil {
+	if data, err := inode.Read(req.Offset, req.Size, fn.fs); err != nil {
 		logger.Errorf("file.read: read %d bytes from ino %d", len(data), fn.ino)
 		return syscall.EIO
 	} else {

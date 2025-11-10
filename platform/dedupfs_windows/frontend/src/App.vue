@@ -949,6 +949,7 @@ let statusCheckInterval = null
 const checkMountPointStatus = async () => {
   statusCheckInterval = setInterval(async () => {
     try {
+      if (isLoading.value) return
       for (let i = 0; i < mountPoints.value.length; i++) {
         const currentMP = mountPoints.value[i]
         const updatedMP = await window.go.main.App.GetMountPoint(currentMP.id)

@@ -59,14 +59,16 @@ type DedupFS struct {
 	MetaDir    string
 	DataDir    string
 	NextNodeID atomic.Int64
+	NextHandle atomic.Int64
 	ChunkConf  *ChunkConfig
 	BlockConf  *BlockConfig
 	RootNode   *Tree
 	KVStore    kvstore.KVStore
-	mutex      sync.RWMutex
 	Dirty      bool
 	Timer      *time.Timer
 	Host       any // 只有windows下使用
+	openmap    map[uint64]uint64
+	mutex      sync.RWMutex
 }
 
 type BackUpINode struct {
@@ -93,12 +95,11 @@ func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
 	nodeSet := make(map[uint64]string)    // 记录所有存在的节点
 
 	// 第一阶段：扫描所有inode并构建关系
-	prefix := fmt.Sprintf("inode:")
+	prefix := "inode:"
 	startKey := ""
 	scanCount := 0
 
 	for {
-
 		keys, nextKey, err := fs.KVStore.Scan(prefix, startKey, 10000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan keys with prefix %s: %w", prefix, err)
@@ -213,14 +214,14 @@ func (fs *DedupFS) CreateNode(parentID uint64, uid, gid uint32, name string, kin
 	// Create new inode
 	ino := uint64(fs.NextNodeID.Add(1))
 
-	inode := CreateINode(ino, parentID, kind, name, uint16(mode))
+	inode := CreateINode(ino, parentID, uid, gid, kind, name, uint32(mode))
 	inode.Uid = uid
 	inode.Gid = gid
 	inode.SymlinkTarget = symlinkTarget
 
 	// For directories, set correct mode and nlink
 	if kind == FileTypeDir {
-		inode.Perm |= 0111 // Ensure executable bits are set for directories
+		inode.Mode |= 0111 // Ensure executable bits are set for directories
 	}
 
 	// Insert into tree and save
@@ -346,7 +347,8 @@ func (fs *DedupFS) ClearAll() error {
 	// 重置根节点
 	fs.RootNode = NewTree()
 	fs.NextNodeID.Store(1) // 1已经用于根目录
-	root := CreateINode(1, 1, FileTypeDir, "/", 0777)
+	fs.NextHandle.Store(1)
+	root := CreateINode(1, 1, 1, 1, FileTypeDir, "/", 0777)
 
 	// 初始化 一些属性
 	root.SetXattr("user.dedupfs.version", []byte("0.1.0"))

@@ -41,6 +41,15 @@ func (t *Tree) Get(id uint64) (*Node, bool) {
 	return node, exists
 }
 
+func (t *Tree) Set(node *Node) {
+	if node == nil {
+		return
+	}
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	t.Nodes[node.ID] = node
+}
+
 // Insert 插入新节点到指定父节点
 func (t *Tree) Insert(parentID uint64, nodeID uint64, name string) (*Node, error) {
 	t.mutex.Lock()
