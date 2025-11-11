@@ -840,64 +840,42 @@ func (fs *DedupFS) getNode(path string, fh uint64) *Node {
 }
 
 func (fs *DedupFS) Statfs(path string, stat *fuse.Statfs_t) int {
-	logger.Debugf("dedupfs.statfs")
-	// 缺省值
+	logger.Debugf("dedupfs.statfs for path: %s", path)
 
-	stat.Blocks = 1000000 // 总块数
-	stat.Bfree = 900000   // 空闲块数（包括 root 保留）
-	stat.Bavail = 900000  // 对普通用户可用的空闲块
-	stat.Files = 100000   // 总 inode 数（可选）
-	stat.Ffree = 90000    // 空闲 inode 数（可选）
-	stat.Bsize = 4096     // 块大小（字节）
-	stat.Namemax = 255    // 文件名最大长度
-	stat.Frsize = 4096    // 基本块大小（通常 = Bsize）
+	_stats, _ := fs.GetStats()
+	// 使用固定的块大小（推荐 4KB，与 NTFS 簇对齐）
+	const blockSize = 4096 // 4KB
 
-	// 1. 使用GetDiskFreeSpaceEx获取总空间、可用空间等
-	totalBytes, freeBytes, _, err := utils.GetDiskFreeSpaceEx(fs.DataDir)
+	// 关键：查询的是 fs.DataDir（真实存储目录），不是 path！
+	totalBytes, freeBytes, availBytes, err := utils.GetDiskFreeSpaceEx(fs.DataDir)
 	if err != nil {
-		logger.Errorf("failed to get disk free space: %v", err)
-		// return -fuse.EIO
+		logger.Errorf("failed to get disk free space for %s: %v", fs.DataDir, err)
+		// 回退到默认值
+		totalBytes = blockSize * 1000000
+		freeBytes = blockSize * 900000
+		availBytes = freeBytes
 	} else {
-		logger.Debugf("totalBytes: %d, freeBytes: %d", totalBytes, freeBytes)
+		logger.Debugf("Disk space - total: %d (%.2f GB), free: %d (%.2f GB)",
+			totalBytes, float64(totalBytes)/1e9,
+			freeBytes, float64(freeBytes)/1e9)
 	}
-
-	// 2. 获取卷信息以取得文件系统名和最大文件名长度
-	fsName, maxNameLen, err := utils.GetVolumeInformation(path)
-	if err != nil {
-		logger.Errorf("failed to get volume information: %v", err)
-		// return -fuse.EIO
-	} else {
-		logger.Debugf("fsName: %s, maxNameLen: %d", fsName, maxNameLen)
+	if _stats != nil {
+		totalBytes = availBytes + uint64(_stats.RealSize)
 	}
-	// 3. (可选) 对于NTFS，使用fsutil获取更精确的块信息[citation:4]
-	var totalClusters, freeClusters, bytesPerCluster uint64
-	if strings.ToUpper(fsName) == "NTFS" {
-		totalClusters, freeClusters, _, bytesPerCluster, _ = utils.GetFsutilInfo(path)
-		// 如果fsutil调用失败，可以回退到使用GetDiskFreeSpaceEx计算出的值
-	}
-
-	// 4. 填充stat结构
-	// 块大小 (f_bsize)
-	if bytesPerCluster > 0 {
-		stat.Bsize = uint64(bytesPerCluster)
-	}
-	// 总数据块数 (f_blocks)
-	if totalClusters > 0 {
-		stat.Blocks = totalClusters // 注意：这里假设fsutil返回的"簇"对应stat的"块"
-	}
-
-	// 可用块数 (f_bfree)
-	if freeClusters > 0 {
-		stat.Bfree = freeClusters
-	}
-
-	stat.Bavail = stat.Bfree
+	// 填充 statfs 结构体
+	stat.Bsize = blockSize                      // 文件系统块大小（用于 I/O）
+	stat.Frsize = blockSize                     // 基本块大小（用于空间计算！）
+	stat.Blocks = totalBytes / blockSize        // 总块数
+	stat.Bfree = freeBytes / blockSize          // 空闲块数（包括特权用户）
+	stat.Bavail = availBytes / blockSize        // 对普通用户可用的空闲块数
 	stat.Files = uint64(len(fs.RootNode.Nodes)) // 总文件节点数
-	stat.Namemax = uint64(maxNameLen)
-	stat.Ffree = 1000000 // 空闲文件节点数
+	stat.Ffree = 900000                         // 空闲文件数（估算）
+	stat.Namemax = 255                          // 最大文件名长度
 	stat.Fsid = xxhash.Sum64([]byte(fs.ID))
 
-	logger.Debugf("dedupfs.statfs: %#v", *stat)
+	logger.Debugf("Statfs result: Blocks=%d, Bfree=%d, Bavail=%d, Bsize=%d, Frsize=%d",
+		stat.Blocks, stat.Bfree, stat.Bavail, stat.Bsize, stat.Frsize)
+
 	return 0
 }
 

@@ -36,8 +36,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Running: go build -tags "windows,console" -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%" cmd.go
-go build -tags "windows,console" -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%" cmd.go
+echo Running: go build -tags "windows,console" -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%" console.go
+go build -tags "windows,console" -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%" console.go
 if errorlevel 1 (
     echo ERROR: Failed to build command line version.
     exit /b 1

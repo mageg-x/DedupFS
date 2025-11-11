@@ -287,11 +287,11 @@ DedupFS 包含强大的调试工具，用于检查内部结构：
 
 `debug block` 命令允许您检查块的详细信息，包括块内的数据块、压缩状态和数据布局。
 
-![块调试界面](block.png)
+![块调试界面](snapshot/debug-block.png)
 
 #### Inode 调试
 
-![Inode 调试界面](inode.png)
+![Inode 调试界面](snapshot/debug-inode.png)
 
 `debug inode` 命令提供有关文件 inode、它们的数据块和元数据的详细信息。
 

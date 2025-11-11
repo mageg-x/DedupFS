@@ -277,11 +277,11 @@ DedupFS includes powerful debug tools for examining internal structures:
 
 The `debug block` command allows you to inspect detailed information about blocks, including chunks, compression status, and data layout.
 
-![Block Debug Interface](block.png)
+![Block Debug Interface](snapshot/debug-block.png)
 
 #### Inode Debug
 
-![Inode Debug Interface](inode.png)
+![Inode Debug Interface](snapshot/debug-inode.png)
 
 The `debug inode` command provides detailed information about file inodes, their chunks, and metadata.
 

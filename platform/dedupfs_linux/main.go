@@ -19,12 +19,12 @@ import (
 	"github.com/spf13/cobra"
 
 	ipccmd "github.com/mageg-x/dedupfs/common/cmd"
+	"github.com/mageg-x/dedupfs/common/console"
 	"github.com/mageg-x/dedupfs/common/dfs"
 	"github.com/mageg-x/dedupfs/common/ipc"
 	"github.com/mageg-x/dedupfs/common/log"
 	"github.com/mageg-x/dedupfs/common/mount"
 	"github.com/mageg-x/dedupfs/common/utils"
-	"github.com/mageg-x/dedupfs/platform/console"
 )
 
 var (
