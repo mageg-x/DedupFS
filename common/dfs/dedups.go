@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/mageg-x/dedupfs/common/kvstore"
@@ -189,6 +191,72 @@ func (fs *DedupFS) BuildNodeTree() (*Tree, error) {
 	logger.Debugf("tree reconstruction completed: total nodes=%d, visited=%d, orphans=%d", len(nodeSet), len(visited), len(orphanNodes))
 
 	return tree, nil
+}
+
+func (fs *DedupFS) Xattr(path string, name string) (int, []byte) {
+	logger.Debugf("getting xattr '%s' for path '%s'", name, path)
+	ino := Path2Ino(fs, path)
+	if ino == 0 {
+		logger.Errorf("getxattr: inode %s not found", path)
+		return int(syscall.ENOENT), nil
+	}
+
+	// 一些扩展特殊的属性, user.dedupfs.inode.xx 提前 xx 为 ino
+	if strings.HasPrefix(name, "user.dedupfs.inode") {
+		if inode, err := GetINode(fs, ino); err != nil || inode == nil {
+			logger.Errorf("getxattr: failed to get inode: %v", err)
+			return int(syscall.ENOENT), nil
+		} else {
+			value, err := json.Marshal(inode)
+			if err != nil {
+				logger.Errorf("failed to marshal inode: %v", err)
+				return int(syscall.EIO), nil
+			}
+			return 0, value
+		}
+	} else if strings.HasPrefix(name, "user.dedupfs.chunk.data.") {
+		// 提取chunk hash
+		chunkHash := name[len("user.dedupfs.chunk.data."):]
+		chunk, err := GetChunkData(chunkHash, fs)
+		if err != nil || chunk == nil || chunk.Data == nil {
+			logger.Errorf("getxattr: failed to get chunk data: %v", err)
+			return int(syscall.ENOENT), nil
+		}
+		value := chunk.Data
+		// 长度不能超过 64K
+		if len(value) > 65536 {
+			value = value[:65536]
+		}
+		return 0, value
+	} else if strings.HasPrefix(name, "user.dedupfs.chunk.meta.") {
+		// 提取chunk hash
+		chunkHash := name[len("user.dedupfs.chunk.meta."):]
+		chunk, err := GetChunkMeta(chunkHash, fs)
+		if err != nil || chunk == nil {
+			logger.Errorf("getxattr: failed to get chunk %s meta: %v", chunkHash, err)
+			return int(syscall.ENOENT), nil
+		}
+		value, err := json.Marshal(chunk)
+		if err != nil {
+			logger.Errorf("failed to marshal chunk %s: %v", chunkHash, err)
+			return int(syscall.EIO), nil
+		}
+		return 0, value
+	}
+
+	inode, err := GetINode(fs, ino)
+	if err != nil || inode == nil {
+		logger.Errorf("getxattr: failed to get inode %d: %v", ino, err)
+		return int(syscall.ENOENT), nil
+	}
+
+	value, err := inode.GetXattr(name)
+	if err != nil {
+		logger.Infof("getxattr: failed to get attribute %s: %v", name, err)
+		return int(syscall.ENODATA), nil
+	}
+
+	return 0, value
 }
 
 // CreateNode creates a new inode with the specified type

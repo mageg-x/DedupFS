@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/mageg-x/dedupfs/common/dfs"
 	"github.com/mageg-x/dedupfs/common/ipc"
 	"github.com/mageg-x/dedupfs/common/log"
-	"github.com/mageg-x/dedupfs/common/utils"
 )
 
 var (
@@ -19,13 +17,12 @@ var (
 
 // 探测服务是否活着
 func InvokeStat(mountPoint string) bool {
-	mountPoint = strings.ToUpper(mountPoint)
 	// 根据 mountPoint 生成 IPC pipe 名称
-	pipeName := fmt.Sprintf("\\\\.\\pipe\\dedupfs_%s", utils.CalcHash([]byte(mountPoint)))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Create IPC client and send stat command
-	client := ipc.NewClient(pipeName)
+	ipcpath := ipc.GetPath(mountPoint)
+	client := ipc.NewClient(ipcpath)
 
 	// Prepare request data
 	reqData := map[string]interface{}{
@@ -46,11 +43,35 @@ func InvokeStat(mountPoint string) bool {
 	logger.Info("stat request sent successfully")
 	return true
 }
+func InvokeMount(mountPoint string, dataDir string, chunkConf, blockConf map[string]interface{}) error {
+	ipcpath := ipc.GetPath(mountPoint)
+
+	// Prepare request data
+	reqData := map[string]interface{}{
+		"mountPoint": mountPoint,
+		"dataDir":    dataDir,
+		"chunkConf":  chunkConf,
+		"blockConf":  blockConf,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := ipc.NewClient(ipcpath)
+	resp, err := client.Call(ctx, "mount", reqData, false)
+	if err != nil {
+		logger.Errorf("failed to send mount command: %v", err)
+		return err
+	}
+	if !resp.Ok {
+		logger.Errorf("mount command rejected: %s", resp.Msg)
+		return fmt.Errorf("mount failed: %s", resp.Msg)
+	}
+	logger.Info("mount request sent successfully")
+	return nil
+}
 
 func InvokeUnmount(mountPoint string) error {
-	mountPoint = strings.ToUpper(mountPoint)
 	// 根据 mountPoint 生成 IPC pipe 名称
-	pipeName := fmt.Sprintf("\\\\.\\pipe\\dedupfs_%s", utils.CalcHash([]byte(mountPoint)))
+	ipcpath := ipc.GetPath(mountPoint)
 
 	// Prepare request data
 	reqData := map[string]interface{}{
@@ -60,7 +81,7 @@ func InvokeUnmount(mountPoint string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Create IPC client and send unmount command
-	client := ipc.NewClient(pipeName)
+	client := ipc.NewClient(ipcpath)
 	resp, err := client.Call(ctx, "unmount", reqData, false)
 	if err != nil {
 		logger.Errorf("failed to send unmount command: %v", err)
@@ -77,18 +98,16 @@ func InvokeUnmount(mountPoint string) error {
 }
 
 func InvokeStats(mountPoint string) (*dfs.FSStats, error) {
-	mountPoint = strings.ToUpper(mountPoint)
 	logger.Infof("collecting statistics for  %s mounted filesystems", mountPoint)
 
 	// 根据 mountPoint 生成 IPC pipe 名称
-	pipeName := fmt.Sprintf("\\\\.\\pipe\\dedupfs_%s", utils.CalcHash([]byte(mountPoint)))
-	// Prepare request data
+	ipcpath := ipc.GetPath(mountPoint)
 	reqData := map[string]interface{}{
 		"mountPoint": mountPoint,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client := ipc.NewClient(pipeName)
+	client := ipc.NewClient(ipcpath)
 	resp, err := client.Call(ctx, "stats", reqData, false)
 	if err != nil {
 		logger.Errorf("failed to send stats command: %v", err)
@@ -110,4 +129,47 @@ func InvokeStats(mountPoint string) (*dfs.FSStats, error) {
 		return nil, fmt.Errorf("unmarshal failed: %v", err)
 	}
 	return &stats, nil
+}
+
+func InvokeXattr(mountPoint string, path string, attrName string) ([]byte, error) {
+	ipcpath := ipc.GetPath(mountPoint)
+	reqData := map[string]interface{}{
+		"mountPoint": mountPoint,
+		"path":       path,
+		"attrName":   attrName,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := ipc.NewClient(ipcpath)
+	resp, err := client.Call(ctx, "xattr", reqData, false)
+	if err != nil {
+		logger.Errorf("failed to send xattr command: %v", err)
+		return nil, err
+	}
+	if !resp.Ok {
+		logger.Errorf("xattr command rejected: %s", resp.Msg)
+		return nil, fmt.Errorf("xattr failed: %s", resp.Msg)
+	}
+	return resp.Data, nil
+}
+
+func InvokeStopSvr(mountPoint string) error {
+	ipcpath := ipc.GetPath(mountPoint)
+	reqData := map[string]interface{}{
+		"mountPoint": mountPoint,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := ipc.NewClient(ipcpath)
+	resp, err := client.Call(ctx, "stop", reqData, true)
+	if err != nil {
+		logger.Errorf("failed to send stop command: %v", err)
+		return err
+	}
+	if !resp.Ok {
+		logger.Errorf("stop command rejected: %s", resp.Msg)
+		return fmt.Errorf("stop failed: %s", resp.Msg)
+	}
+	logger.Info("stop request sent successfully")
+	return nil
 }

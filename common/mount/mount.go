@@ -9,24 +9,24 @@ import (
 
 // ChunkConfig represents chunk configuration options
 type ChunkConfig struct {
-	FixedSize bool
-	MinSize   int64
-	AvgSize   int64
-	MaxSize   int64
+	FixedSize bool  `json:"fixedSize"`
+	MinSize   int64 `json:"minSize"`
+	AvgSize   int64 `json:"avgSize"`
+	MaxSize   int64 `json:"maxSize"`
 }
 
 // BlockConfig represents block configuration options
 type BlockConfig struct {
-	Size     int64
-	Compress bool
-	Encrypt  bool
-	Password string
+	Size     int64  `json:"size"`
+	Compress bool   `json:"compress"`
+	Encrypt  bool   `json:"encrypt"`
+	Password string `json:"password,omitempty"` // omitempty 避免传空字符串
 }
 
 // MountOptions contains all mount options
 type MountOptions struct {
-	ChunkConf *ChunkConfig
-	BlockConf *BlockConfig
+	ChunkConf *ChunkConfig `json:"chunkConf"`
+	BlockConf *BlockConfig `json:"blockConf"`
 }
 
 var (

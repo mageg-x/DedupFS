@@ -19,7 +19,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
-	github.com/schollz/progressbar/v3 v3.14.0
+	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
@@ -27,7 +27,6 @@ require (
 	github.com/winfsp/cgofuse v1.6.0
 	golang.org/x/crypto v0.43.0
 	golang.org/x/sys v0.37.0
-	golang.org/x/term v0.36.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
@@ -102,6 +101,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df // indirect
 	golang.org/x/net v0.45.0 // indirect
+	golang.org/x/term v0.36.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )

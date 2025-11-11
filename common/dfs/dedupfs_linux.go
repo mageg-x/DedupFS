@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -540,71 +539,13 @@ func (fn BaseNode) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp
 	fn.fs.mutex.RLock()
 	defer fn.fs.mutex.RUnlock()
 
-	// 一些扩展特殊的属性, user.dedupfs.inode.xx 提前 xx 为 ino
-	if strings.HasPrefix(req.Name, "user.dedupfs.inode.") {
-		// 提取ino
-		ino, err := strconv.ParseUint(req.Name[len("user.dedupfs.inode."):], 10, 64)
-		if err != nil {
-			logger.Errorf("failed to parse ino from xattr name: %v", err)
-			return fmt.Errorf("failed to parse ino from xattr name")
-		}
-		if inode, err := GetINode(fn.fs, ino); err != nil || inode == nil {
-			logger.Errorf("getxattr: failed to get inode: %v", err)
-			return syscall.ENOENT
-		} else {
-			value, err := json.Marshal(inode)
-			if err != nil {
-				logger.Errorf("failed to marshal inode: %v", err)
-				return syscall.EIO
-			}
-			resp.Xattr = value
-			return nil
-		}
-	} else if strings.HasPrefix(req.Name, "user.dedupfs.chunk.data.") {
-		// 提取chunk hash
-		chunkHash := req.Name[len("user.dedupfs.chunk.data."):]
-		chunk, err := GetChunkData(chunkHash, fn.fs)
-		if err != nil || chunk == nil || chunk.Data == nil {
-			logger.Errorf("getxattr: failed to get chunk data: %v", err)
-			return syscall.ENOENT
-		}
-		value := chunk.Data
-		// 长度不能超过 64K
-		if len(value) > 65536 {
-			value = value[:65536]
-		}
-		resp.Xattr = value
-		return nil
-	} else if strings.HasPrefix(req.Name, "user.dedupfs.chunk.meta.") {
-		// 提取chunk hash
-		chunkHash := req.Name[len("user.dedupfs.chunk.meta."):]
-		chunk, err := GetChunkMeta(chunkHash, fn.fs)
-		if err != nil || chunk == nil {
-			logger.Errorf("getxattr: failed to get chunk %s meta: %v", chunkHash, err)
-			return syscall.ENOENT
-		}
-		value, err := json.Marshal(chunk)
-		if err != nil {
-			logger.Errorf("failed to marshal chunk %s: %v", chunkHash, err)
-			return syscall.EIO
-		}
-		resp.Xattr = value
-		return nil
+	path := Ino2Path(fn.fs, fn.ino)
+	name := req.Name
+	c, val := fn.fs.Xattr(path, name)
+	if c != 0 {
+		return syscall.Errno(c)
 	}
-
-	inode, err := GetINode(fn.fs, fn.ino)
-	if err != nil || inode == nil {
-		logger.Errorf("getxattr: failed to get inode %d: %v", fn.ino, err)
-		return syscall.ENOENT
-	}
-
-	value, err := inode.GetXattr(req.Name)
-	if err != nil {
-		logger.Infof("getxattr: failed to get attribute %s: %v", req.Name, err)
-		return syscall.ENODATA
-	}
-
-	resp.Xattr = value
+	resp.Xattr = val
 	return nil
 }
 

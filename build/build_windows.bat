@@ -30,14 +30,14 @@ if exist "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%" (
 
 REM Build command line version (does not require wails)
 echo Building command line version...
-cd /d "%WIN_DIR%\cmd"
+cd /d "%WIN_DIR%"
 if errorlevel 1 (
-    echo Error: Failed to change directory to %WIN_DIR%\cmd
+    echo Error: Failed to change directory to %WIN_DIR%
     exit /b 1
 )
 
-echo Running: go build -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%"
-go build  -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%"
+echo Running: go build -tags "windows,console" -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%" cmd.go
+go build -tags "windows,console" -o "%PROJECT_ROOT%\build\%CLI_OUTPUT_NAME%" cmd.go
 if errorlevel 1 (
     echo ERROR: Failed to build command line version.
     exit /b 1
@@ -108,7 +108,7 @@ if errorlevel 1 (
 )
 
 echo Building GUI executable...
-call wails build --clean
+call wails build --clean -tags "windows,gui"
 if errorlevel 1 (
     echo Warning: Failed to build GUI version.
     goto CLI_ONLY

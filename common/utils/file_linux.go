@@ -4,10 +4,7 @@ package utils
 
 import (
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -31,36 +28,6 @@ type FileStat struct {
 	ModTime int64       // 修改时间
 	UID     uint32      // 用户ID
 	GID     uint32      // 组ID
-}
-
-func IsDirEmpty(path string) (bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-
-	_, err = f.Readdirnames(1) // 尝试读取一个条目
-	if err == io.EOF {
-		return true, nil // 空
-	}
-	return false, nil // 非空（或错误，但通常视为非空）
-}
-
-func ListAllFiles(root string) ([]string, error) {
-	var files []string
-
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err // 跳过无法访问的路径（或返回 err 中止）
-		}
-		if !d.IsDir() {
-			files = append(files, path)
-		}
-		return nil
-	})
-
-	return files, err
 }
 
 // 使用Linux特定的系统调用获取文件统计信息

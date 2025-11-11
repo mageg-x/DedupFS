@@ -22,3 +22,7 @@ func Dial(path string) (net.Conn, error) {
 func DialTimeout(path string, timeout time.Duration) (net.Conn, error) {
 	return net.DialTimeout("unix", path, timeout)
 }
+
+func GetPath(mountPoint string) string {
+	return "/tmp/dedupfs.sock"
+}

@@ -581,17 +581,7 @@ func (fs *DedupFS) Getxattr(path string, name string) (int, []byte) {
 		logger.Errorf("getxattr: com.apple.ResourceFork not supported")
 		return -fuse.ENOTSUP, nil
 	}
-	inode, err := GetINode(fs, node.ID)
-	if err != nil || inode == nil {
-		logger.Errorf("getxattr: failed to get inode %s : %v", path, err)
-		return -fuse.ENOENT, nil
-	}
-	value, err := inode.GetXattr(name)
-	if err != nil {
-		logger.Errorf("getxattr: failed to get xattr: %v", err)
-		return -fuse.EIO, nil
-	}
-	return 0, value
+	return fs.Xattr(path, name)
 }
 
 func (fs *DedupFS) Removexattr(path string, name string) int {
@@ -829,7 +819,7 @@ func (fs *DedupFS) openNode(path string, flags int) (int, uint64) {
 }
 
 func (fs *DedupFS) closeNode(fh uint64) int {
-	logger.Errorf("closeNode= %d", fh)
+	logger.Debugf("closeNode= %d", fh)
 	delete(fs.openmap, fh)
 	return 0
 }
@@ -924,10 +914,20 @@ func (fs *DedupFS) Create(path string, flags int, mode uint32) (int, uint64) {
 
 	_, _, node := fs.lookup(path)
 	if node == nil {
-		ret := fs.makeNode(path, mode, nil)
-		if ret != 0 {
-			logger.Errorf("create: failed to create file: %v", ret)
-			return ret, ^uint64(0)
+		if (flags & fuse.O_CREAT) != 0 {
+			ret := fs.makeNode(path, mode, nil)
+			if ret != 0 {
+				logger.Errorf("create: failed to create file: %v", ret)
+				return ret, ^uint64(0)
+			}
+		} else {
+			logger.Errorf("node not found for %s", path)
+			return -fuse.ENOENT, ^uint64(0)
+		}
+	} else {
+		if (flags & (fuse.O_CREAT | fuse.O_EXCL)) == (fuse.O_CREAT | fuse.O_EXCL) {
+			logger.Errorf("file already exists: %s", path)
+			return -fuse.EEXIST, ^uint64(0)
 		}
 	}
 

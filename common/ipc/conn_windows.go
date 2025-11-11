@@ -4,10 +4,12 @@ package ipc
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 
 	"github.com/Microsoft/go-winio"
+	"github.com/mageg-x/dedupfs/common/utils"
 )
 
 func Listen(path string) (net.Listener, error) {
@@ -27,4 +29,9 @@ func DialTimeout(path string, timeout time.Duration) (net.Conn, error) {
 
 	// DialPipe with timeout as deadline
 	return winio.DialPipeContext(ctx, path)
+}
+
+func GetPath(mountPoint string) string {
+	pipeName := fmt.Sprintf("\\\\.\\pipe\\dedupfs_%s", utils.CalcHash([]byte(mountPoint)))
+	return pipeName
 }

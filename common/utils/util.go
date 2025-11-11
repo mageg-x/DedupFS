@@ -9,9 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	mrand "math/rand"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -205,4 +208,37 @@ func Decrypt(data []byte, key string) ([]byte, error) {
 	}
 
 	return plaintext, nil
+}
+
+func IsDirEmpty(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	_, err = f.Readdirnames(1) // 尝试读取一个条目
+	if err == io.EOF {
+		return true, nil // 空
+	}
+	return false, nil // 非空（或错误，但通常视为非空）
+}
+
+func ListAllFiles(root string) ([]string, error) {
+	var files []string
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err // 跳过无法访问的路径（或返回 err 中止）
+		}
+		if !d.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+
+	return files, err
+}
+func ToUnixPath(p string) string {
+	return strings.ReplaceAll(p, "\\", "/")
 }

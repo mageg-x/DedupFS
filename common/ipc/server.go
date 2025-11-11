@@ -40,10 +40,8 @@ func (s *Server) handleConn(ctx context.Context, conn Conn) {
 	enc := json.NewEncoder(conn)
 
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
 		}
 		var req Request
 		if err := dec.Decode(&req); err != nil {
@@ -85,13 +83,14 @@ func (s *Server) Start(ctx context.Context) error {
 		logger.Info("server stopped")
 	}()
 
-	for {
+	// 启动一个 goroutine 监听 ctx 取消，用于关闭 listener
+	go func() {
 		// 监听 ctx 是否取消
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+		<-ctx.Done()
+		listener.Close()
+	}()
+
+	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if s.closed || ctx.Err() != nil {
