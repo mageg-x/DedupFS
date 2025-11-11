@@ -186,19 +186,72 @@ Data reassembly → [Transparent return]
 - **AI/ML Data Lakes**: Intelligent compression of training datasets
 - **Log Storage Systems**: Elimination of repetitive patterns in structured logs
 
+## Screenshots
+
+### Linux / Windows
+
+<!-- tabs:start -->
+
+#### ** Linux **
+
+##### Debug Tools Interface
+
+**Block Debug Interface**
+
+![Block Debug Interface](snapshot/debug-block.png)
+
+**Inode Debug Interface**
+
+![Inode Debug Interface](snapshot/debug-inode.png)
+
+#### ** Windows **
+
+##### Main Interface
+
+![Main Interface](snapshot/main-en.png)
+
+##### Statistics Interface
+
+![Stats Interface](snapshot/stats-en.png)
+
+##### Block Management Interface
+
+![Block Interface](snapshot/block-en.png)
+
+##### Chunk Interface
+
+![Chunk Interface](snapshot/chunk-en.png)
+
+##### Debug Tools Interface
+
+**Block Debug Interface**
+
+![Block Debug Interface](snapshot/debug-block.png)
+
+**Inode Debug Interface**
+
+![Inode Debug Interface](snapshot/debug-inode.png)
+
+<!-- tabs:end -->
+
 ## Quick Start
 
-### Installation
+### Linux / Windows
+
+<!-- tabs:start -->
+
+#### ** Linux **
+
+##### Installation
 
 ```bash
 # Compile from source
 git clone https://github.com/your-username/dedupfs.git
 cd dedupfs
 go build -o dedupfs main.go
-
 ```
 
-### Basic Usage
+##### Basic Usage
 
 ```bash
 # Start dedupfs server (server must be started before mounting filesystem)
@@ -227,6 +280,40 @@ ls -lh /mnt/dfs/
 # Debug inode information
 ./dedupfs debug /mnt/dfs inode file.txt
 ```
+
+#### ** Windows **
+
+##### Installation
+
+Download or compile from source to generate `dedupfs.exe` and `dedupfs-cli.exe` executable files.
+
+##### Basic Usage
+
+Double-click `dedupfs.exe` to launch the graphical interface, or use command line:
+
+```powershell
+# Start dedupfs server
+dedupfs server start
+
+# Mount deduplication filesystem
+./dedupfs mount X:\ data\ --min-size=1048576 --avg-size=2097152 --max-size=4194304 --compress=true
+
+# Use the filesystem normally
+copy large_file.iso X:\
+dir X:\
+
+# Check deduplication effectiveness
+./dedupfs stats
+
+# Unmount the filesystem
+./dedupfs unmount X:\
+
+# Stop dedupfs server
+./dedupfs server stop
+```
+
+<!-- tabs:end -->
+
 ![Stats Command Interface](stats.png)
 ### Advanced Configuration
 

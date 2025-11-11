@@ -183,9 +183,63 @@ Zstandard 解压 → [内存解压]
 - **AI/ML 数据湖**：训练数据集的智能压缩
 - **日志存储系统**：结构化日志的重复模式消除
 
+## 屏幕截图
+
+### Linux / Windows
+
+<!-- tabs:start -->
+
+#### ** Linux **
+
+##### 调试工具界面
+
+**Block 调试界面**
+
+![Block Debug Interface](snapshot/debug-block.png)
+
+**Inode 调试界面**
+
+![Inode Debug Interface](snapshot/debug-inode.png)
+
+#### ** Windows **
+
+##### 主界面
+
+![Main Interface](snapshot/main.png)
+
+##### 统计信息界面
+
+![Stats Interface](snapshot/stats.png)
+
+##### 块管理界面
+
+![Block Interface](snapshot/block.png)
+
+##### 数据块界面
+
+![Chunk Interface](snapshot/chunk.png)
+
+##### 调试工具界面
+
+**Block 调试界面**
+
+![Block Debug Interface](snapshot/debug-block.png)
+
+**Inode 调试界面**
+
+![Inode Debug Interface](snapshot/debug-inode.png)
+
+<!-- tabs:end -->
+
 ## 快速开始
 
-### 安装
+### Linux / Windows
+
+<!-- tabs:start -->
+
+#### ** Linux **
+
+##### 安装
 
 ```bash
 # 从源码编译
@@ -194,7 +248,7 @@ cd dedupfs
 go build -o dedupfs main.go
 ```
 
-### 基础使用
+##### 基础使用
 
 ```bash
 # 启动服务器
@@ -218,11 +272,45 @@ ls -lh /mnt/dfs/
 
 # 调试命令
 # 调试块信息
-./dedupfs debug /mnt/dfs block  blockID
+./dedupfs debug /mnt/dfs block blockID
 
 # 调试inode信息
-./dedupfs debug /mnt/dfs inode  file.txt
+./dedupfs debug /mnt/dfs inode file.txt
 ```
+
+#### ** Windows **
+
+##### 安装
+
+直接下载或从源码编译生成 `dedupfs.exe` 和 `dedupfs-cli.exe` 可执行文件。
+
+##### 基础使用
+
+双击 `dedupfs.exe` 启动图形界面，或使用命令行：
+
+```powershell
+# 启动服务器
+dedupfs server start
+
+# 挂载去重文件系统
+./dedupfs mount X:\ data\ --min-size=1048576 --avg-size=2097152 --max-size=4194304 --compress=true
+
+# 正常使用文件系统
+copy large_file.iso X:\
+dir X:\
+
+# 查看去重效果
+./dedupfs stats
+
+# 卸载文件系统
+./dedupfs unmount X:\
+
+# 停止服务器
+./dedupfs server stop
+```
+
+<!-- tabs:end -->
+
 ![Stats Command Interface](stats.png)
 ### 高级配置
 
