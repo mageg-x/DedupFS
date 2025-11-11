@@ -463,6 +463,7 @@ func debugBlockAction(mountPoint, blockID string) error {
 }
 
 func debugINodeAction(mountPoint, inodeName string) error {
+	logger.Info("debug inode")
 	dataDirBytes, err := ipccmd.InvokeXattr(mountPoint, "/", "user.dedupfs.datadir")
 	if err != nil || dataDirBytes == nil {
 		logger.Errorf("failed to read data dir: %v", err)
